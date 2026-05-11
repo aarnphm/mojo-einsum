@@ -42,6 +42,24 @@ def test_is_available_matches_import_spec() -> None:
   assert is_available() is spec_present
 
 
+def test_is_loadable_implies_is_available() -> None:
+  """`is_loadable()` is strictly stronger than `is_available()` - if
+  the package can dlopen, the spec must also exist. The converse is
+  not enforced (a broken dev env has spec but no dlopen)."""
+  if is_loadable():
+    assert is_available(), "is_loadable returned True but spec is missing - impossible"
+
+
+def test_is_loadable_matches_actual_max_core_import() -> None:
+  """`is_loadable()` should agree with a hand-rolled `import max._core`."""
+  try:
+    importlib.import_module("max._core")
+    core_imports = True
+  except ImportError:
+    core_imports = False
+  assert is_loadable() is core_imports
+
+
 def test_require_max_graph_error_when_missing() -> None:
   if is_available():
     pytest.skip("max.graph installed; cannot test the missing-dep path")
