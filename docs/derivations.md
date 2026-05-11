@@ -5,7 +5,6 @@ date: 2025/05/10
 
 _see also [[notation|Notation]] for more information._
 
-
 ## 1. The BMM lowering
 
 > [!important]
@@ -103,43 +102,60 @@ Pure FLOPs gives compute-optimal paths; pure memory gives memory-optimal paths; 
 
 We ships FLOPs (`path.mojo`) as the DP cost—fully compute-optimal—and uses reduced_size only inside the greedy.
 
-### Why use reduced_size as the DP cost too?
+### Why use `reduced_size` as the DP cost too?
 
-You can — opt_einsum offers both. The argument for FLOPs in the DP: FLOPs directly determine compute time on the BMM-lowered path (cubical in the inner loop bound), and memory cost is bounded by FLOPs to within a factor of $|K|$ where $K$ is the contracted dim. The argument for reduced_size: peak memory is a hard constraint (OOM), and on GPU peak intermediates often dominate runtime through eviction.
+You can—opt_einsum offers both.
 
-For ML-shaped einsums (≤ 8 operands, each ≤ 6 dims) the two cost models almost always agree. They diverge for tensor-network contractions (n > 20) where slicing — accepting more FLOPs to fit memory — becomes important. moeinsum doesn't ship cotengra-style slicing in v0.1; n > 30 contractions should use `cotengra` directly via Python and pass the explicit path.
+The argument for FLOPs in the DP is that it directly determine compute time on the BMM-lowered path (cubical in the inner loop bound), and memory cost is bounded by FLOPs to within a factor of $|K|$ where $K$ is the contracted dim.
+Whereas the argument for reduced_size is peak memory being a hard constraint (OOM), and on GPU peak intermediates often dominate runtime through eviction.
+
+For ML-shaped einsums ($\le 8$ operands, each $\le 6$ dims) the two cost models are somewhat similar.
+
+> They only diverge for tensor-network contractions (n > 20) where slicing—accepting more FLOPs to fit memory—becomes important.
+
+We don't ship cotengra-style slicing yet; but that is to be added.
 
 ### Cardoso et al. 2024
 
-The Cardoso et al. paper _Optimizing Tensor Contraction Paths: A Greedy Algorithm Approach With Improved Cost Functions_ ([arxiv 2405.09644](https://arxiv.org/abs/2405.09644)) shows that pure `reduced_size` undervalues steps with high FLOP/memory divergence. Their proposed cost:
+Cardoso et al. 2024 ([arxiv 2405.09644](https://arxiv.org/abs/2405.09644)) shows that pure `reduced_size` undervalues steps with high FLOP/memory divergence. They proposed a cost model:
 
 $$\text{cost}_{\text{Cardoso}}(A, B) = \alpha \cdot \text{flops}(A, B) + (1 - \alpha) \cdot \text{reduced\_size}(A, B)$$
 
-with $\alpha$ tuned per-problem. moeinsum's `path.mojo` has FLOP and memory cost as separate functions; wiring Cardoso's mixed cost in is a one-line edit. Future work.
+with $\alpha$ tuned per-problem.
+
+`path.mojo` has FLOP and memory cost as separate functions; therefore wiring Cardoso's mixed cost is possible. tbd
 
 ### The branch family
 
-opt_einsum also ships `branch-all`, `branch-2`, `branch-1` — best-first searches over the contraction tree, pruned by current best total cost. These sit between DP optimal and greedy on the time/quality curve. For n=5–7 they're often the sweet spot. moeinsum's v0.1 omits them; the implementation is mechanical and lands when a real workload demands it.
+opt_einsum also ships `branch-all`, `branch-2`, `branch-1`—best-first searches over the contraction tree, pruned by current best total cost.
+
+These sit between DP optimal and greedy on the time/quality curve. For n=5–7 they're often the sweet spot.
+
+We will need to implement this at some point.
 
 ## 3. GETT: GEMM-like Tensor-Tensor multiplication
 
 The BMM lowering's weakness is the cost of physical permutation. When contracted dimensions aren't naturally adjacent in memory, you pay a bandwidth-bound transpose op with no FLOPs to amortize. For irregular contractions this transpose can dominate runtime.
 
-The GETT approach (Springer & Bientinesi 2018, [arxiv 1607.00145](https://arxiv.org/abs/1607.00145); the same idea Devin Matthews exploited in TBLIS, [arxiv 1607.00291](https://arxiv.org/abs/1607.00291)) avoids the transpose by fusing it into the GEMM's tile-loading code.
+The GETT approach (Springer et al. 2018, [arxiv 1607.00145](https://arxiv.org/abs/1607.00145) that had the same idea that Devin Matthews exploited in TBLIS, [arxiv 1607.00291](https://arxiv.org/abs/1607.00291)), where he avoids the transpose by fusing it into the GEMM's tile-loading code.
 
 ### The BLIS micro-kernel structure (background)
 
 BLIS (Van Zee et al.) decomposes a GEMM kernel into three layers:
 
-1. **Partition loops** — outer loops over M-tile, N-tile, K-tile.
-2. **Packing** — copy each tile from its source layout into a tight, register-aligned buffer (Apack for A, Bpack for B).
-3. **Micro-kernel** — the inner FLOP loop, register-blocked at the hardware's tile shape (e.g. 6×8 for AVX-512 fp64, 64×128×16 for SM90 WGMMA).
+1. **Partition loops**—outer loops over M-tile, N-tile, K-tile.
+2. **Packing**—copy each tile from its source layout into a tight, register-aligned buffer (Apack for A, Bpack for B).
+3. **Micro-kernel**—the inner FLOP loop, register-blocked at the hardware's tile shape (e.g. $6\times 8$ for AVX-512 fp64, $64\times 128\times 16$ for SM90 WGMMA).
 
-In a standard GEMM, packing is a "boring" memcpy with stride math. The micro-kernel doesn't care where its tile came from — it just reads from Apack.
+In a standard GEMM, packing is a "boring" memcpy with stride math.
 
-### The GETT insight
+### GETT notes
 
-For a tensor contraction, the M / K / N axes are flattenings of multiple source dims. The packing routine _already_ has to walk those source dims to gather a tile. So: instead of a separate transpose pass, the packing routine indexes the source tensor through the (multi-dim) M, K, N axis mappings directly. No intermediate buffer; no separate transpose kernel. The micro-kernel is unchanged.
+For a tensor contraction, the M / K / N axes are _flattenings_ of multiple source dims.
+
+The packing routine _already_ has to walk those source dims to gather a tile. So: instead of a separate transpose pass, the packing routine indexes the source tensor through the (multi-dim) M, K, N axis mappings directly.
+
+This results in no intermediate buffer; no separate transpose kernel.
 
 In pseudocode:
 
@@ -159,7 +175,8 @@ for each M-tile, K-tile, N-tile:
     micro_kernel(Apack, Bpack, C-tile)
 ```
 
-`pack_tensor` does what `pack(permuted_...)` does but reads through the original strides directly. The savings: no temporary buffer for the transposes, and the M / K / N flattening logic is in cache-hot packing code rather than a separate bandwidth-bound op.
+`pack_tensor` does what `pack(permuted_...)` does but reads through the original strides directly.
+We introduce no temporary buffer for the transposes, and the M / K / N flattening logic is in cache-hot packing code rather than a separate bandwidth-bound op.
 
 ### Empirical wins
 
@@ -173,11 +190,9 @@ GETT is more complex code per kernel: every contraction shape technically wants 
 
 Mojo's compile-time specialization is the natural answer here. If the equation is a `StringLiteral` (or a JIT-cache key in our P7 model), each unique B/K/M/N shape signature compiles to its own specialized packing loop. No NVRTC tax, no template explosion. This is the architectural argument for a fresh Mojo implementation over wrapping cuTENSOR.
 
-## 4. Low-precision accumulation: √K rounding error
+## 4. Low-precision accumulation
 
-A bf16 → bf16 accumulator GEMM (or any low-precision accumulator) has a real numerical-correctness problem that compounds with the contracted dimension K. This isn't a quality-of-implementation knob — it's mathematics.
-
-### The derivation
+A bf16 → bf16 accumulator GEMM (or any low-precision accumulator) has a real numerical-correctness problem that compounds with the contracted dimension K.
 
 Suppose we accumulate $K$ random products $a_k b_k$ where $a_k, b_k \sim \mathcal{N}(0, 1)$. The true sum is $\sum_{k=1}^K a_k b_k$, and the accumulated result is $\sum_{k=1}^K \text{fl}(a_k b_k)$ where $\text{fl}$ is the rounding operator at the accumulator's precision.
 
@@ -244,7 +259,3 @@ else:
 ```
 
 moeinsum's `classify_pair` currently always uses the lhs-first order, which means about half of contractions get a final permute they could have avoided. Improving this is a one-line conditional in the plan builder; future work for the perf phase.
-
----
-
-These six derivations cover the load-bearing math of moeinsum. The notation primer (`notation.md`) establishes the vocabulary; this document establishes the algorithms; `perf.md` covers the empirics. The plan, the kernels, and the backends are then implementation of these ideas.

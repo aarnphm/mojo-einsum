@@ -1,11 +1,5 @@
 [build-system]
-requires = [
-  "mohaus>=0.1,<0.2",
-  "mojo==1.0.0b2.dev2026051006",
-  "mojo-compiler==1.0.0b2.dev2026051006",
-  "mojo-compiler-mojo-libs==1.0.0b2.dev2026051006",
-  "mojo-lldb-libs==1.0.0b2.dev2026051006",
-]
+requires = ["mohaus>=0.1,<0.2"]
 build-backend = "mohaus.backend"
 
 [project]
@@ -29,13 +23,20 @@ max = ["max"]
 torch = ["torch>=2.4"]
 jax = ["jax>=0.4.30"]
 mlx = ["mlx>=0.20"]
-opt-einsum-compat = ["opt_einsum>=3.3"]
-dev = ["pytest>=8", "pytest-xdist>=3", "hypothesis>=6", "ruff>=0.5", "ty"]
+opt-einsum = ["opt_einsum>=3.3"]
+dev = [
+  "pytest>=8",
+  "pytest-xdist>=3",
+  "hypothesis>=6",
+  "ruff>=0.5",
+  "ty",
+  "ipython",
+]
 
 [tool.mohaus]
 module-name = "moeinsum._native"
 strip = true
-generate-stub = true
+generate-stub = false
 mojo-flags = []
 
 [tool.ruff]

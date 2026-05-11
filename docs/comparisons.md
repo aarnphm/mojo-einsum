@@ -3,32 +3,31 @@ title: Comparison
 date: 2026/05/10
 ---
 
-
 ## Feature parity
 
-| Feature                        | moeinsum (v0.1)            | NumPy                | PyTorch               | JAX                   | cuTENSOR           | TBLIS          |
-| ------------------------------ | -------------------------- | -------------------- | --------------------- | --------------------- | ------------------ | -------------- |
-| Basic equation grammar         | ✅                         | ✅                   | ✅                    | ✅                    | ✅ (C API)         | ✅ (C API)     |
-| Implicit output                | ✅                         | ✅                   | ✅                    | ✅                    | n/a                | n/a            |
-| Ellipsis broadcasting          | ✅                         | ✅                   | ✅                    | ✅                    | n/a                | n/a            |
-| Trace / diagonal               | ✅                         | ✅                   | ✅                    | ✅                    | n/a                | partial        |
-| Multi-operand paths            | ✅                         | needs `optimize=`    | auto (via opt_einsum) | auto (via opt_einsum) | single-step        | single-step    |
-| `greedy` algorithm             | ✅                         | ✅ (`einsum_path`)   | ✅ (via opt_einsum)   | ✅ (via opt_einsum)   | n/a                | n/a            |
-| `optimal` DP algorithm         | ✅ (n ≤ 16)                | ✅ $n \leq \approx 10$         | ✅ (via opt_einsum)   | ✅ (via opt_einsum)   | n/a                | n/a            |
-| `random-greedy`                | ✅ (fixed-trial)           | ❌                   | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
-| `branch` family                | ✅ (`all` / `2` / `1`)     | ❌                   | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
-| Hypergraph paths (cotengra)    | ❌ (out of v0.1 scope)     | ❌                   | external              | external              | n/a                | n/a            |
-| Compile-time-known paths       | ✅ (when shapes are alias) | ❌                   | ❌                    | partial (jit-traced)  | partial (JIT plan) | ❌             |
-| Per-call-site kernel cache     | ✅ (P7)                    | ❌                   | ❌                    | ✅ (jit cache)        | ✅ (plan cache)    | ❌             |
-| GETT-style fused permute       | ⏳ (P11/P12)               | ❌                   | ❌                    | ❌                    | ✅                 | ✅             |
-| Native CPU tensor-core (AMX)   | ✅ (via MAX)               | partial (Accelerate) | partial               | partial               | n/a                | partial        |
-| Native GPU tensor-core (WGMMA) | ✅ (via MAX)               | n/a                  | ✅                    | ✅                    | ✅                 | n/a            |
-| Configurable accumulator dtype | ✅                         | partial              | partial               | ✅                    | ✅                 | n/a            |
-| Deterministic reduction flag   | ✅ (P9)                    | partial              | partial               | partial               | ❌                 | n/a            |
-| NumPy interop                  | ✅                         | n/a                  | via conversion        | via conversion        | via cupy           | via conversion |
-| PyTorch interop                | ✅ (DLPack, P8)            | n/a                  | n/a                   | via DLPack            | via cupy           | n/a            |
-| JAX interop                    | ✅ (DLPack, P8)            | n/a                  | via DLPack            | n/a                   | n/a                | n/a            |
-| MLX interop                    | ✅ (DLPack, P8)            | n/a                  | n/a                   | n/a                   | n/a                | n/a            |
+| Feature                        | moeinsum (v0.1)            | NumPy                  | PyTorch               | JAX                   | cuTENSOR           | TBLIS          |
+| ------------------------------ | -------------------------- | ---------------------- | --------------------- | --------------------- | ------------------ | -------------- |
+| Basic equation grammar         | ✅                         | ✅                     | ✅                    | ✅                    | ✅ (C API)         | ✅ (C API)     |
+| Implicit output                | ✅                         | ✅                     | ✅                    | ✅                    | n/a                | n/a            |
+| Ellipsis broadcasting          | ✅                         | ✅                     | ✅                    | ✅                    | n/a                | n/a            |
+| Trace / diagonal               | ✅                         | ✅                     | ✅                    | ✅                    | n/a                | partial        |
+| Multi-operand paths            | ✅                         | needs `optimize=`      | auto (via opt_einsum) | auto (via opt_einsum) | single-step        | single-step    |
+| `greedy` algorithm             | ✅                         | ✅ (`einsum_path`)     | ✅ (via opt_einsum)   | ✅ (via opt_einsum)   | n/a                | n/a            |
+| `optimal` DP algorithm         | ✅ (n ≤ 16)                | ✅ $n \leq \approx 10$ | ✅ (via opt_einsum)   | ✅ (via opt_einsum)   | n/a                | n/a            |
+| `random-greedy`                | ✅ (fixed-trial)           | ❌                     | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
+| `branch` family                | ✅ (`all` / `2` / `1`)     | ❌                     | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
+| Hypergraph paths (cotengra)    | ❌ (out of v0.1 scope)     | ❌                     | external              | external              | n/a                | n/a            |
+| Compile-time-known paths       | ✅ (when shapes are alias) | ❌                     | ❌                    | partial (jit-traced)  | partial (JIT plan) | ❌             |
+| Per-call-site kernel cache     | ✅ (P7)                    | ❌                     | ❌                    | ✅ (jit cache)        | ✅ (plan cache)    | ❌             |
+| GETT-style fused permute       | ⏳ (P11/P12)               | ❌                     | ❌                    | ❌                    | ✅                 | ✅             |
+| Native CPU tensor-core (AMX)   | ✅ (via MAX)               | partial (Accelerate)   | partial               | partial               | n/a                | partial        |
+| Native GPU tensor-core (WGMMA) | ✅ (via MAX)               | n/a                    | ✅                    | ✅                    | ✅                 | n/a            |
+| Configurable accumulator dtype | ✅                         | partial                | partial               | ✅                    | ✅                 | n/a            |
+| Deterministic reduction flag   | ✅ (P9)                    | partial                | partial               | partial               | ❌                 | n/a            |
+| NumPy interop                  | ✅                         | n/a                    | via conversion        | via conversion        | via cupy           | via conversion |
+| PyTorch interop                | ✅ (DLPack, P8)            | n/a                    | n/a                   | via DLPack            | via cupy           | n/a            |
+| JAX interop                    | ✅ (DLPack, P8)            | n/a                    | via DLPack            | n/a                   | n/a                | n/a            |
+| MLX interop                    | ✅ (DLPack, P8)            | n/a                    | n/a                   | n/a                   | n/a                | n/a            |
 
 Legend: ✅ shipped, ⏳ planned, ❌ not in scope. "n/a" means the comparison doesn't make sense (e.g. NumPy interop with NumPy itself).
 
@@ -37,24 +36,24 @@ Legend: ✅ shipped, ⏳ planned, ❌ not in scope. "n/a" means the comparison d
 expectation:
 
 - **Matmul-shaped einsums** (`ij,jk->ik`, `bij,bjk->bik`):
-	- Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes, because we lower directly to MAX's `linalg.batched_matmul`.
-	- _call-site overhead_ matters separately; see below.
+  - Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes, because we lower directly to MAX's `linalg.batched_matmul`.
+  - _call-site overhead_ matters separately; see below.
 - **Multi-operand chains** (`ij,jk,kl,lm->im`):
-	- Same matmul kernel for each step, plus path-optimizer choice.
-	- `optimal` uses the same DP recurrence as opt_einsum.
-	- Results should match JAX + opt_einsum on these workloads.
+  - Same matmul kernel for each step, plus path-optimizer choice.
+  - `optimal` uses the same DP recurrence as opt_einsum.
+  - Results should match JAX + opt_einsum on these workloads.
 - **Irregular contractions** (heavy permute, awkward strides):
-	- moeinsum's `max` backend currently does TTGT and materializes the permute.
-	- PyTorch/JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5-3x on these shapes.
-	- The `native` backend's P11/P12 GETT implementation targets parity here.
+  - moeinsum's `max` backend currently does TTGT and materializes the permute.
+  - PyTorch/JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5-3x on these shapes.
+  - The `native` backend's P11/P12 GETT implementation targets parity here.
 - **Tensor networks** (n > 20 operands, dense contractions):
-	- opt_einsum's greedy is suboptimal.
-	- cotengra's hypergraph paths win by orders of magnitude.
+  - opt_einsum's greedy is suboptimal.
+  - cotengra's hypergraph paths win by orders of magnitude.
 - **Call-site overhead** (latency of `einsum("ij,jk->ik", a, b)` over hot cache):
-	- PyTorch and JAX both parse the equation, call opt_einsum, classify dims, and dispatch BMM on every call.
-	- For small tensors it can dominate the FLOPs.
-	- moeinsum's JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel.
-		- Expected ~10x reduction in call-site latency for repeated small einsums.
+  - PyTorch and JAX both parse the equation, call opt_einsum, classify dims, and dispatch BMM on every call.
+  - For small tensors it can dominate the FLOPs.
+  - moeinsum's JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel.
+    - Expected ~10x reduction in call-site latency for repeated small einsums.
 
 ## Gaps
 
@@ -76,11 +75,11 @@ This is the moneyball table — given Mojo's unique leverage, where does it pay 
 
 | From           | Steal                                                                  | Why                                                                           |
 | -------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **opt_einsum** | Path-finding algorithm family (greedy, optimal, random-greedy, branch) | Smith & Gray got this right. Good way for me to learn                        |
+| **opt_einsum** | Path-finding algorithm family (greedy, optimal, random-greedy, branch) | Smith & Gray got this right. Good way for me to learn                         |
 | **PyTorch**    | `sumproduct_pair` four-bucket classification                           | The B/K/M/N taxonomy is the right factorization. JAX uses the same algorithm. |
 | **JAX**        | The lhs/rhs-swap output-permutation trick                              | Saves a final transpose on ~50% of contractions. One-line code change.        |
 | **cuTENSOR**   | GETT algorithm; plan-cache pattern                                     | The right kernel design and the right caching strategy, separately.           |
-| **TBLIS**      | BLIS-packing-aware tensor contraction                                  | The CPU implementation of GETT.               |
+| **TBLIS**      | BLIS-packing-aware tensor contraction                                  | The CPU implementation of GETT.                                               |
 | **MLX**        | Lazy evaluation for whole-graph fusion                                 | `max_graph` backend P14 — let MAX do the fusion, don't reinvent it.           |
 | **cotengra**   | (Future) hypergraph paths                                              | The right algorithm for n > 30. Out of v0.1; potentially Phase 16+.           |
 

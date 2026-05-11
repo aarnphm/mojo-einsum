@@ -75,6 +75,22 @@ def _is_explicit_path(optimize: object) -> bool:
   return all(isinstance(s, Sequence) and not isinstance(s, str) for s in optimize)
 
 
+def _is_known_optimize(name: str) -> bool:
+  """True iff `name` is a known optimizer string.
+
+  Accepts the literal entries from `_OPTIMIZE` plus `random-greedy-N` for
+  any N ≥ 1 — the Mojo dispatcher parses the suffix.
+  """
+  if name in _OPTIMIZE:
+    return True
+  prefix = "random-greedy-"
+  if name.startswith(prefix):
+    suffix = name[len(prefix) :]
+    if suffix.isdigit():
+      return int(suffix) >= 1
+  return False
+
+
 def _validate_explicit_path(
   raw_path: Sequence[Sequence[int]],
   n_operands: int,
@@ -181,7 +197,7 @@ def einsum(
     _validate_explicit_path(
       cast("Sequence[Sequence[int]]", optimize), len(operands)
     )
-  elif optimize not in _OPTIMIZE:
+  elif not _is_known_optimize(cast("str", optimize)):
     raise ValueError(f"unknown optimize {optimize!r}; available: {_OPTIMIZE}")
 
   if not operands:
@@ -229,7 +245,7 @@ def einsum_path(
     # materialized, caching adds nothing.
     return explicit_path
 
-  if optimize not in _OPTIMIZE:
+  if not _is_known_optimize(cast("str", optimize)):
     raise ValueError(f"unknown optimize {optimize!r}; available: {_OPTIMIZE}")
 
   key = ("__einsum_path__", eq, shapes_tuple, optimize)

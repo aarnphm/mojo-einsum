@@ -41,24 +41,24 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 
 ## Roadmap
 
-| Phase | Status  | What                                                                                       |
-| ----- | ------- | ------------------------------------------------------------------------------------------ |
-| P0    | ✅      | Scaffolding                                                                                |
-| P1    | ✅      | Reference backend + parser + plan + numpy bridge                                           |
-| P2    | ✅      | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                     |
-| P3    | ✅      | Unary kernels (transpose / diagonal / sum / trace)                                         |
-| P4    | ✅      | Path optimizer: greedy + optimal-DP + auto + random-greedy + branch family                 |
-| P5    | ⏳      | `MaxBackend` dispatching to `linalg.batched_matmul` (needs TileTensor FFI)                 |
-| P6    | ✅      | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred     |
-| P7    | ✅      | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                               |
-| P8    | ✅\*    | DLPack interop (first pass): torch / jax / mlx / cupy / tensorflow via DLPack + np.asarray |
-| P9    | ✅\*    | Precision (parameters wired; real low-precision lands with MaxBackend)                     |
-| P10   | ⏳      | GPU dispatch validation (target="gpu" via batched_matmul)                                  |
-| P11   | ⏳      | `NativeOptimizedBackend` CPU: GETT-style fused permute (TBLIS)                             |
-| P12   | ⏳      | `NativeOptimizedBackend` GPU SM90: WGMMA + TMA + fused permute                              |
-| P13   | ✅      | Benchmark CLI                                                                              |
-| P14   | ⏳      | `MaxGraphBackend`: whole-graph fusion via `max.graph`                                      |
-| P15   | ✅      | Docs (notation / derivations / perf / comparisons), editor-reviewed                        |
+| Phase | Status | What                                                                                       |
+| ----- | ------ | ------------------------------------------------------------------------------------------ |
+| P0    | ✅     | Scaffolding                                                                                |
+| P1    | ✅     | Reference backend + parser + plan + numpy bridge                                           |
+| P2    | ✅     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                     |
+| P3    | ✅     | Unary kernels (transpose / diagonal / sum / trace)                                         |
+| P4    | ✅     | Path optimizer: greedy + optimal-DP + auto + random-greedy + branch family                 |
+| P5    | ⏳     | `MaxBackend` dispatching to `linalg.batched_matmul` (needs TileTensor FFI)                 |
+| P6    | ✅     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred     |
+| P7    | ✅     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                               |
+| P8    | ✅\*   | DLPack interop (first pass): torch / jax / mlx / cupy / tensorflow via DLPack + np.asarray |
+| P9    | ✅\*   | Precision (parameters wired; real low-precision lands with MaxBackend)                     |
+| P10   | ⏳     | GPU dispatch validation (target="gpu" via batched_matmul)                                  |
+| P11   | ⏳     | `NativeOptimizedBackend` CPU: GETT-style fused permute (TBLIS)                             |
+| P12   | ⏳     | `NativeOptimizedBackend` GPU SM90: WGMMA + TMA + fused permute                             |
+| P13   | ✅     | Benchmark CLI                                                                              |
+| P14   | ⏳     | `MaxGraphBackend`: whole-graph fusion via `max.graph`                                      |
+| P15   | ✅     | Docs (notation / derivations / perf / comparisons), editor-reviewed                        |
 
 ✅ shipped · ✅\* shipped first pass (real polish deferred to P5) · ⏳ pending.
 

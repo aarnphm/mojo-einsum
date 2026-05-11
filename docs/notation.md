@@ -1,4 +1,7 @@
-# Einsum notation
+---
+title: Einsum notation
+date: 2025/05/10
+---
 
 Take a matrix product $C = A B$. Written elementwise:
 

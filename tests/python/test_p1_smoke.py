@@ -164,3 +164,27 @@ def test_path_random_greedy_matches_optimal_on_bellman() -> None:
   rg = moeinsum.einsum_path("ij,jk,kl->il", *shapes, optimize="random-greedy")
   optimal = moeinsum.einsum_path("ij,jk,kl->il", *shapes, optimize="optimal")
   assert rg == optimal
+
+
+def test_path_random_greedy_with_trial_count() -> None:
+  """`random-greedy-N` parses N and runs N trials. Result must still
+  beat or match greedy on the Bellman chain."""
+  shapes = ((100, 1), (1, 100_000), (100_000, 1))
+  optimal = moeinsum.einsum_path("ij,jk,kl->il", *shapes, optimize="optimal")
+  for n in (1, 4, 64, 256):
+    rg = moeinsum.einsum_path(
+      "ij,jk,kl->il", *shapes, optimize=f"random-greedy-{n}"
+    )
+    assert rg == optimal, f"random-greedy-{n} chose {rg}"
+
+
+def test_path_random_greedy_zero_trials_rejected() -> None:
+  """N must be ≥ 1; N=0 and non-numeric suffixes raise."""
+  with pytest.raises(ValueError, match="unknown optimize"):
+    moeinsum.einsum_path(
+      "ij,jk->ik", (2, 3), (3, 4), optimize="random-greedy-0"
+    )
+  with pytest.raises(ValueError, match="unknown optimize"):
+    moeinsum.einsum_path(
+      "ij,jk->ik", (2, 3), (3, 4), optimize="random-greedy-abc"
+    )

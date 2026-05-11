@@ -730,6 +730,51 @@ def random_greedy_path(
     return best_path^
 
 
+def _parse_trial_suffix(algorithm: String, after: Int) raises -> Int:
+    """Parse the trailing positive integer of `random-greedy-N`.
+
+    `after` is the byte offset where the digit suffix should begin. Raises
+    if there are no digits, or a non-digit byte appears, or the parsed
+    value is < 1.
+    """
+    var bytes = algorithm.as_bytes()
+    var n = len(bytes)
+    if after >= n:
+        raise Error(
+            String("random-greedy: missing trial count in '", algorithm, "'")
+        )
+    var value: Int = 0
+    for i in range(after, n):
+        var c = Int(bytes[i])
+        if c < 48 or c > 57:  # ASCII '0' .. '9'
+            raise Error(
+                String(
+                    "random-greedy: non-digit in trial suffix '",
+                    algorithm,
+                    "'",
+                )
+            )
+        value = value * 10 + (c - 48)
+    if value < 1:
+        raise Error(
+            String("random-greedy: trials must be ≥ 1, got ", value)
+        )
+    return value
+
+
+def _has_prefix(s: String, prefix: String) -> Bool:
+    """Byte-level prefix check — avoids depending on a stdlib helper."""
+    var sb = s.as_bytes()
+    var pb = prefix.as_bytes()
+    var pl = len(pb)
+    if len(sb) < pl:
+        return False
+    for i in range(pl):
+        if sb[i] != pb[i]:
+            return False
+    return True
+
+
 def compute_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
@@ -738,8 +783,9 @@ def compute_path(
     """Dispatch to the named algorithm.
 
     Supported algorithms: `greedy`, `optimal`, `auto`, `naive`,
-    `random-greedy`, `branch-all`, `branch-2`, `branch-1`. "naive"
-    is deterministic left-to-right pairing, useful as a baseline.
+    `random-greedy` (32 trials), `random-greedy-N` for any N ≥ 1,
+    `branch-all`, `branch-2`, `branch-1`. "naive" is deterministic
+    left-to-right pairing, useful as a baseline.
     """
     if algorithm == String("greedy"):
         return greedy_path(eq, label_sizes)
@@ -757,12 +803,21 @@ def compute_path(
         return branch_path(eq, label_sizes, 2)
     if algorithm == String("branch-1"):
         return branch_path(eq, label_sizes, 1)
+
+    # random-greedy-N (N a positive integer).
+    var rg_prefix = String("random-greedy-")
+    if _has_prefix(algorithm, rg_prefix):
+        var n_trials = _parse_trial_suffix(
+            algorithm, len(rg_prefix.as_bytes())
+        )
+        return random_greedy_path(eq, label_sizes, n_trials)
+
     raise Error(
         String(
             "compute_path: unknown algorithm '",
             algorithm,
             "'. Supported: greedy, optimal, auto, naive, random-greedy, ",
-            "branch-all, branch-2, branch-1.",
+            "random-greedy-N (N ≥ 1), branch-all, branch-2, branch-1.",
         )
     )
 

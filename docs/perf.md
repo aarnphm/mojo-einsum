@@ -1,40 +1,38 @@
-# Performance tuning
+---
+title: Performance tuning
+date: 2025/05/10
+---
 
-This page is the user-facing companion to `derivations.md`. The math there explains _why_ certain choices matter; here are the _what_ and _when_: which backend to pick, which `optimize=` setting, which accumulator dtype, and how to read profiler output when something is slower than you expect.
+This page is the user-facing companion to [[derivations]]. We will go into which backend to pick, which `optimize=` setting, which accumulator dtype, and expectation when you see degradation.
 
-## When to choose which backend
+## backens
 
-moeinsum ships four backends; the default `max` is right for almost everything. The exceptions are worth knowing.
+moeinsum ships four backends; the default `max` is right for almost everything.
 
-**`reference`** — naive nested loop, fp64 internally. Use it for:
+**`reference`**—naive nested loop, fp64 internally. Use it for:
 
 - Correctness debugging. If a result differs from numpy, run with `backend="reference"` first; that result is bit-equivalent to numpy at fp64 by construction.
-- Tiny inputs (≤ 100 elements). The reference loop has no overhead; the BMM-lowered path has constant launch cost.
-- Education / single-stepping. The reference walks every label index explicitly, so it's trivial to read.
+- Tiny inputs ($\le 100$ elements). The reference loop has no overhead; the BMM-lowered path has constant launch cost.
+- Education/single-stepping. The reference walks every label index explicitly, so it's trivial to read.
 
 Never use `reference` for anything bigger than ~10000 total elements. It scales O(product-of-all-label-sizes).
 
-**`max`** — lowers each pairwise step to `linalg.batched_matmul`. Use it for:
+**`max`**—lowers each pairwise step to `linalg.batched_matmul`. Use it for:
 
-- Everything you'd normally use `numpy.einsum`, `torch.einsum`, or `jax.numpy.einsum` for. ML-shaped contractions, batched matmuls, multi-step chains under ~10 operands.
+- Everything you'd normally use `numpy.einsum`, `torch.einsum`, or `jax.numpy.einsum` for, some 1-to-1 replacement
 - CPU (Apple Silicon, AVX-512) — the matmul dispatcher handles platform selection. You get vDSP/AMX on Mac, BLIS-style packed AVX-512 on Intel/AMD, NEON on ARM.
 - GPU (SM90, SM100, AMD CDNA) — with `target="gpu"` and a valid `DeviceContext`, the same dispatcher routes to tensor-core kernels. WGMMA on Hopper, MFMA on AMD.
 
-The matmul dispatch is where almost all the engineering effort has gone — that's the win of going through MAX rather than rolling our own. Default to this.
+**`native`**—our own GETT-style kernels. Use when:
 
-**`native`** — our own GETT-style kernels. Use when:
+- The contraction has a heavy permute that `max` would materialize.
+  - A good heuristic includes any contraction where the contracted dims aren't naturally adjacent and they account for $\ge 30$% of total work.
+- You need fp16/bf16/fp8 micro-control. The `native` path lets the accumulator-precision choice flow into the WGMMA/MFMA opcode selection.
 
-- The contraction has a heavy permute that `max` would materialize. Pattern: any contraction where the contracted dims aren't naturally adjacent and they account for ≥ 30% of total work. Profile to confirm.
-- You need fp16 / bf16 / fp8 micro-control. The `native` path lets the accumulator-precision choice flow into the WGMMA/MFMA opcode selection in a way that `linalg.batched_matmul`'s parameter doesn't expose granularly.
+**`max_graph`**—builds a MAX graph from the contraction plan and hands it to the MAX compiler. Use when:
 
-In v0.1 this backend is a stub; full GETT lands in Phase 11 / 12.
-
-**`max_graph`** — builds a MAX graph from the contraction plan and hands it to the MAX compiler. Use when:
-
-- You have multiple einsums in sequence with elementwise ops between them. MAX's whole-graph fusion can collapse all of that into one kernel — the BMM-lowered path can't.
-- Latency cost of MAX graph construction is amortized over many calls (training, inference loop, repeated benchmark iterations).
-
-In v0.1 this backend is a stub; full integration lands in Phase 14.
+- You have multiple einsums in sequence with elementwise ops between them. MAX's whole-graph fusion can collapse all of that into one megakernel. This is usually more useful than lowering BMM.
+- Latency cost of MAX graph construction is amortized over many calls.
 
 ## Which `optimize=` algorithm
 
@@ -47,9 +45,9 @@ This is the path-optimizer choice, separate from the backend. opt_einsum's algor
 | `optimal` | Default for n ≤ 4 (this is what `auto` picks). Truly optimal in FLOPs. | O(3ⁿ) planning, tractable to n=16 |
 | `auto`    | Automatic threshold dispatch. Default for the public API.              | Per-n table above                 |
 
-For n ≤ 4, the planning cost is negligible — always use `optimal` or `auto`. For n in the 5–16 range, `optimal` adds noticeable overhead (milliseconds to seconds at n=16), but if the einsum will be called repeatedly, the JIT cache (P7) amortizes it to zero across calls.
+For $n \le 4$, the planning cost is negligible — always use `optimal` or `auto`. For n in the 5–16 range, `optimal` adds noticeable overhead (milliseconds to seconds at n=16), but if the einsum will be called repeatedly, the JIT cache amortizes it to zero across calls.
 
-For n > 16: `greedy` is the only option in v0.1. If you have a real tensor-network workload with n > 30 (quantum simulation, lattice contractions), use `cotengra` directly via Python to compute the path, then pass it explicitly:
+For n > 16: I only implement `greedy` for now. If you have a real tensor-network workload with n > 30 (quantum simulation, lattice contractions), use `cotengra` directly via Python to compute the path, then pass it explicitly:
 
 ```python
 import cotengra as ctg
@@ -59,9 +57,9 @@ result = moeinsum.einsum(eq, *arrays, optimize=path)
 
 (The explicit-path API lands with P4 polish; for v0.1 you can call `einsum_path` yourself and pass the result.)
 
-## Accumulator dtype
+## Accumulator DType
 
-Default behavior: inputs cast up to `accum_dtype` for the accumulation, result cast back to `result_dtype`. The default `accum_dtype` is the larger of fp32 and the input dtype.
+inputs cast up to `accum_dtype` for the accumulation, result cast back to `result_dtype`. The default `accum_dtype` is the larger of fp32 and the input dtype.
 
 | Input dtype | Default `accum_dtype` | When to override                                                                                          |
 | ----------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -70,7 +68,7 @@ Default behavior: inputs cast up to `accum_dtype` for the accumulation, result c
 | fp64        | fp64                  | n/a                                                                                                       |
 | int\*       | int64                 | If you can guarantee no overflow, int32 saves bandwidth.                                                  |
 
-The `derivations.md` §4 derivation shows the √K error growth concretely. The headline number: bf16 accumulator at K=4096 has ~50% relative error. fp32 accumulator at K=4096 has ~10⁻⁵ error. The fp32 accumulator costs 2× bandwidth at the input but is a non-negotiable correctness requirement.
+The [[derivations#4. Low-precision accumulation|derivation 4]] shows the $\sqrt{K}$ error growth concretely. The headline number: bf16 accumulator at K=4096 has ~50% relative error. fp32 accumulator at K=4096 has ~10⁻⁵ error. The fp32 accumulator costs 2× bandwidth at the input but is a non-negotiable correctness requirement.
 
 ## Deterministic reductions
 
