@@ -26,6 +26,9 @@ Output JSON (sweep mode):
                "greedy": {...}, ...},
    "fastest": "greedy",
    "ratios": {"naive": 2.4, "greedy": 1.0, ...}}
+
+Progress bars render to stderr when requested with `--progress`, or by
+default when stderr is interactive. JSON always stays on stdout.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ import statistics
 import sys
 import sysconfig
 import time
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,6 +59,12 @@ if "MOJO_PYTHON_LIBRARY" not in os.environ:
 import numpy as np
 
 from . import einsum, einsum_path
+from ._cache import PLAN_CACHE
+
+try:
+  from tqdm import tqdm as _tqdm
+except ImportError:  # pragma: no cover - exercised by environments without the bench group
+  _tqdm = None
 
 
 def _parse_shapes(shape_strs: list[str]) -> list[tuple[int, ...]]:
@@ -84,6 +94,23 @@ def _time_one(
   einsum(eq, *operands, backend=backend, optimize=optimize)
   t1 = time.perf_counter()
   return (t1 - t0) * 1000.0
+
+
+def _progress_range(count: int, *, desc: str, enabled: bool) -> Iterable[int]:
+  values = range(count)
+  if not enabled:
+    return values
+  if _tqdm is None:
+    return values
+  return _tqdm(
+    values,
+    total=count,
+    desc=desc,
+    unit="run",
+    file=sys.stderr,
+    dynamic_ncols=True,
+    leave=False,
+  )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -136,7 +163,40 @@ def main(argv: list[str] | None = None) -> int:
       "numpy ratio. Lets you spot regressions against the canonical baseline."
     ),
   )
+  p.add_argument(
+    "--cache-bench",
+    action="store_true",
+    help=(
+      "Pin plan §3 ('hot-path latency dominated by backend execute()') "
+      "numerically. Clears PLAN_CACHE, times one cold call, then "
+      "--repeats hot calls; emits cold_ms, hot_ms_median, "
+      "cache_speedup_ratio. Hot/cold ratio < 1 means the JIT cache "
+      "isn't saving anything — investigate."
+    ),
+  )
+  progress = p.add_mutually_exclusive_group()
+  progress.add_argument(
+    "--progress",
+    dest="progress",
+    action="store_true",
+    default=None,
+    help="Show progress bars on stderr. JSON output stays on stdout.",
+  )
+  progress.add_argument(
+    "--no-progress",
+    dest="progress",
+    action="store_false",
+    help="Disable progress bars.",
+  )
   args = p.parse_args(argv)
+  if args.repeats < 1:
+    p.error("--repeats must be >= 1")
+  if args.warmup < 0:
+    p.error("--warmup must be >= 0")
+
+  show_progress = sys.stderr.isatty() if args.progress is None else args.progress
+  if show_progress and _tqdm is None:
+    p.error("progress output requires tqdm; run with `uv run --group bench moeinsum-bench ...`")
 
   shapes = _parse_shapes(args.shapes)
   dtype = np.dtype(args.dtype)
@@ -163,9 +223,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     per_opt: dict[str, dict[str, object]] = {}
     for opt in optimizers:
-      for _ in range(args.warmup):
+      for _ in _progress_range(args.warmup, desc=f"warmup {opt}", enabled=show_progress):
         _time_one(args.equation, operands, args.backend, opt)
-      timings = [_time_one(args.equation, operands, args.backend, opt) for _ in range(args.repeats)]
+      timings = [
+        _time_one(args.equation, operands, args.backend, opt)
+        for _ in _progress_range(args.repeats, desc=f"bench {opt}", enabled=show_progress)
+      ]
       per_opt[opt] = {
         "ms_median": statistics.median(timings),
         "ms_min": min(timings),
@@ -193,11 +256,11 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
   # Warmup.
-  for _ in range(args.warmup):
+  for _ in _progress_range(args.warmup, desc="warmup moeinsum", enabled=show_progress):
     _time_one(args.equation, operands, args.backend, args.optimize)
 
   timings = []
-  for _ in range(args.repeats):
+  for _ in _progress_range(args.repeats, desc="bench moeinsum", enabled=show_progress):
     timings.append(_time_one(args.equation, operands, args.backend, args.optimize))
 
   result = {
@@ -217,12 +280,34 @@ def main(argv: list[str] | None = None) -> int:
   if args.include_path:
     result["path"] = einsum_path(args.equation, *shapes, optimize=args.optimize)
 
+  if args.cache_bench:
+    # Cold call: empty the cache, time one un-cached execution. The
+    # cold path pays parse + plan + path optimize + reference loop.
+    PLAN_CACHE.clear()
+    t0 = time.perf_counter()
+    einsum(args.equation, *operands, backend=args.backend, optimize=args.optimize)
+    t1 = time.perf_counter()
+    cold_ms = (t1 - t0) * 1000.0
+
+    # Hot calls: cache is now populated. Subsequent invocations skip
+    # parse + plan and go straight to the kernel.
+    hot_timings: list[float] = []
+    for _ in _progress_range(args.repeats, desc="cache-bench hot", enabled=show_progress):
+      hot_timings.append(_time_one(args.equation, operands, args.backend, args.optimize))
+    hot_median = statistics.median(hot_timings)
+    result["cold_ms"] = cold_ms
+    result["hot_ms_median"] = hot_median
+    result["hot_ms_min"] = min(hot_timings)
+    result["hot_ms_max"] = max(hot_timings)
+    # Round to 3dp — anything past that is noise on perf_counter.
+    result["cache_speedup_ratio"] = round(cold_ms / hot_median, 3) if hot_median > 0 else 0.0
+
   if args.vs_numpy:
     # Warmup numpy too so we compare hot-path to hot-path.
-    for _ in range(args.warmup):
+    for _ in _progress_range(args.warmup, desc="warmup numpy", enabled=show_progress):
       np.einsum(args.equation, *operands, optimize=True)
     np_timings: list[float] = []
-    for _ in range(args.repeats):
+    for _ in _progress_range(args.repeats, desc="bench numpy", enabled=show_progress):
       t0 = time.perf_counter()
       np.einsum(args.equation, *operands, optimize=True)
       t1 = time.perf_counter()

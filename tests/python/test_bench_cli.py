@@ -143,6 +143,33 @@ def test_module_entry_vs_numpy() -> None:
   assert rec["vs_numpy_ratio"] > 0
 
 
+def test_module_entry_progress_stays_on_stderr() -> None:
+  pytest.importorskip("tqdm")
+  args = _bench_args("ij,jk->ik", ["4,4", "4,4"], progress=True)
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  assert rec["equation"] == "ij,jk->ik"
+  assert "bench moeinsum" in proc.stderr
+
+
+def test_module_entry_cache_bench() -> None:
+  """`--cache-bench` clears PLAN_CACHE, times one cold call, then times
+  --repeats hot calls; result must carry cold_ms, hot_ms_median, and
+  cache_speedup_ratio (a positive float). The actual ratio is too
+  noisy to assert tightly — we just check the schema and that the
+  ratio is finite."""
+  args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], cache_bench=True)
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  for key in ("cold_ms", "hot_ms_median", "hot_ms_min", "hot_ms_max", "cache_speedup_ratio"):
+    assert key in rec, f"missing schema key {key!r}"
+  assert rec["cold_ms"] > 0
+  assert rec["hot_ms_median"] > 0
+  assert rec["cache_speedup_ratio"] > 0
+
+
 def test_module_entry_random_greedy_n() -> None:
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], optimize="random-greedy-16")
   proc = _run(_python(), "-m", "moeinsum.bench", *args)
