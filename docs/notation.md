@@ -68,7 +68,7 @@ $$s = \sum_{ij} A_{ij} B_{ij}$$
 
 $$t = \sum_{ij} A_{ij} B_{ji} = \mathrm{tr}(AB)$$
 
-## The four roles every dim plays
+## four sets
 
 For any two-operand contraction `lhs,rhs->out`, every label falls into one of four category:
 

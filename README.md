@@ -21,7 +21,7 @@ assert np.allclose(c, a @ b)
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `python -m moeinsum.bench` with JSON output.
-- **Tests**: 216 numpy-parity / parser / path / cache / interop cases. 3 framework-tests skip when torch/jax/mlx not installed.
+- **Tests**: 217 numpy-parity / parser / path / cache / interop cases. 3 framework-tests skip when torch/jax/mlx not installed.
 
 ## Docs
 

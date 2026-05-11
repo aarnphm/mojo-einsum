@@ -14,14 +14,17 @@ _see also [[notation|Notation]] for more information._
 > 
 > This is JAX's `einsum` implementation, PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to under the hood.
 
-Take a two-operand contraction `lhs,rhs->out` with labels classified into four sets (`notation.md`):
+Take a two-operand contraction `lhs,rhs->out` with labels classified into [[notation#four sets]]:
 
-- B — batch (in lhs ∩ rhs ∩ out)
-- M — free-left (in lhs ∩ out, not rhs)
-- N — free-right (in rhs ∩ out, not lhs)
-- K — contract (in lhs ∩ rhs, not out)
+- B—batch (in $\text{lhs} \cap \text{rhs} \cap \text{out}$)
+- M—free-left (in $\text{lhs} \cap \text{out}$)
+- N—free-right (in $\text{rhs} \cap  \text{out}$)
+- K—contract (in $\text{lhs} \cap \text{rhs}$)
 
-Choose any orderings $b_1, \ldots, b_{|B|}$ for the B labels, $m_1, \ldots, m_{|M|}$ for M, $n_1, \ldots, n_{|N|}$ for N, $k_1, \ldots, k_{|K|}$ for K. Permute lhs to label order `(b, m, k)`, permute rhs to label order `(b, k, n)`. Reshape:
+Choose any orderings $b_1, \ldots, b_{|B|}$ for the B labels, $m_1, \ldots, m_{|M|}$ for M, $n_1, \ldots, n_{|N|}$ for N, $k_1, \ldots, k_{|K|}$ for K. 
+Permute lhs to label order `(b, m, k)`, permute rhs to label order `(b, k, n)`. 
+
+We have reshape:
 
 $$L_{(b),(m),(k)} = \text{lhs}_{b, m, k}, \quad R_{(b),(k),(n)} = \text{rhs}_{b, k, n}$$
 
