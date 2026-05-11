@@ -143,6 +143,21 @@ def test_module_entry_vs_numpy() -> None:
   assert rec["vs_numpy_ratio"] > 0
 
 
+def test_module_entry_compare_engines() -> None:
+  args = _bench_args("ij,jk->ik", ["4,4", "4,4"], compare_engines="numpy,opt_einsum,mlx")
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  comparisons = rec["comparisons"]
+  assert comparisons["moeinsum"]["status"] == "ok"
+  assert comparisons["numpy"]["status"] == "ok"
+  assert comparisons["numpy"]["ms_median"] > 0
+  assert "speedup_vs_moeinsum" in comparisons["numpy"]
+  assert comparisons["opt_einsum"]["status"] in {"ok", "skipped", "error"}
+  assert comparisons["mlx"]["status"] in {"ok", "skipped", "error"}
+  assert rec["comparison_fastest"] in rec["comparison_ratios"]
+
+
 def test_module_entry_progress_stays_on_stderr() -> None:
   pytest.importorskip("tqdm")
   args = _bench_args("ij,jk->ik", ["4,4", "4,4"], progress=True)
