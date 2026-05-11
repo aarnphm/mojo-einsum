@@ -33,14 +33,17 @@ Legend: ✅ shipped, ⏳ planned, ❌ not in scope. "n/a" means the comparison d
 expectation:
 
 - **Matmul-shaped einsums** (`ij,jk->ik`, `bij,bjk->bik`): 
-  - Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes, because we lower. The differentiator at this shape is _call-site overhead_ — see below.
-	
-
-**Multi-operand chains** (`ij,jk,kl,lm->im`): same matmul kernel for each step, plus path-optimizer choice. moeinsum's `optimal` matches opt_einsum's `optimal` exactly (same algorithm). Should be functionally identical to JAX + opt_einsum on these workloads.
-
-**Irregular contractions** (heavy permute, awkward strides): moeinsum's `max` does TTGT — physically materializes the permute. PyTorch / JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5–3× on these shapes. The `native` backend's P11/P12 GETT implementation targets parity here.
-
-**Tensor networks** (n > 20 operands, dense contractions): opt_einsum's greedy is suboptimal. cotengra's hypergraph paths win by orders of magnitude. moeinsum v0.1 doesn't compete here; users should use cotengra to compute the path and pass it explicitly.
+	- Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes, because we lowered directly to MAX's `linalg.batched_matmul`. 
+	- _call-site overhead_ — see below.
+- **Multi-operand chains** (`ij,jk,kl,lm->im`): 
+	- same matmul kernel for each step, plus path-optimizer choice. 
+	- based on opt_einsum's `optimal` exactly (same algorithm). 
+	- Should be functionally identical to JAX + opt_einsum on these workloads.
+- **Irregular contractions** (heavy permute, awkward strides): 
+	- moeinsum's `max` does TTGT to physically materializes the permute. 
+	- PyTorch/JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5–3× on these shapes. 
+	- The `native` backend's P11/P12 GETT implementation targets parity here.
+- **Tensor networks** (n > 20 operands, dense contractions): opt_einsum's greedy is suboptimal. cotengra's hypergraph paths win by orders of magnitude. moeinsum v0.1 doesn't compete here; users should use cotengra to compute the path and pass it explicitly.
 
 **Call-site overhead** (latency of `einsum("ij,jk->ik", a, b)` over hot cache): this is where moeinsum's design choice pays off. PyTorch and JAX both parse the equation, call opt_einsum, classify dims, and dispatch BMM on every call. The work isn't huge — microseconds — but for small tensors it can dominate the FLOPs. moeinsum's JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel. Expected ~10× reduction in call-site latency for repeated small einsums.
 

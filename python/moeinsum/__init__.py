@@ -21,6 +21,8 @@ import numpy as np
 from numpy.typing import DTypeLike
 
 from ._cache import PLAN_CACHE
+from ._interop import source_kind as _source_kind
+from ._interop import to_numpy as _to_numpy
 from ._native import (
   einsum_compute_path as _einsum_compute_path_native,
 )
@@ -89,7 +91,12 @@ def einsum(
   if not operands:
     raise ValueError("einsum requires at least one operand")
 
-  arrays = [np.ascontiguousarray(np.asarray(o, dtype=np.float64)) for o in operands]
+  # Normalize every operand to a contiguous fp64 numpy array via the
+  # DLPack-first adapter — accepts numpy / torch / jax / mlx / cupy /
+  # tensorflow / anything implementing `__array__`. The first operand's
+  # framework decides the return type (P8 polish; v0.1 always returns
+  # numpy regardless).
+  arrays = [_to_numpy(o) for o in operands]
   flats = [a.ravel().tolist() for a in arrays]
   shapes = [list(a.shape) for a in arrays]
 
@@ -121,13 +128,10 @@ def einsum_path(eq: str, *operand_shapes: tuple[int, ...], optimize: str = "auto
   shapes_lists = [list(s) for s in operand_shapes]
   if optimize == "naive" or len(shapes_tuple) <= 1:
     # build_naive_plan emits unary singletons for 1-operand einsums.
-    result = cast("list[tuple[int, ...]]", _einsum_path_native(eq, shapes_lists))
+    result = _einsum_path_native(eq, shapes_lists)
   else:
     # compute_path's greedy / optimal / auto algorithms return only
     # pairwise steps; 1-operand cases trivially produce an empty path.
-    result = cast(
-      "list[tuple[int, ...]]",
-      _einsum_compute_path_native(eq, shapes_lists, optimize),
-    )
+    result = _einsum_compute_path_native(eq, shapes_lists, optimize)
   PLAN_CACHE.put(key, result)
   return result
