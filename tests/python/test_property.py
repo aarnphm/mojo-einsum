@@ -527,3 +527,95 @@ def test_auto_le_naive(
   assert ca <= cn, (
     f"auto FLOPs {ca} > naive FLOPs {cn} for {eq!r} @ {shapes}"
   )
+
+
+# ---------------------------------------------------------------------
+# Determinism contract (P9 surface)
+# ---------------------------------------------------------------------
+
+
+@given(
+  case=equations(min_operands=2, max_operands=3),
+)
+@settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
+def test_einsum_deterministic_bit_equal(
+  case: tuple[str, list[tuple[int, ...]]],
+) -> None:
+  """`deterministic=True` (the default) must produce bit-identical
+  results across repeat calls — the reference backend is single-threaded
+  scalar so this is the trivial case, but the contract is what callers
+  will rely on against MaxBackend's threaded reduction."""
+  eq, shapes = case
+  rng = np.random.default_rng(0)
+  arrays = [rng.standard_normal(s) for s in shapes]
+  a = moeinsum.einsum(eq, *arrays, deterministic=True)
+  b = moeinsum.einsum(eq, *arrays, deterministic=True)
+  assert isinstance(a, np.ndarray)
+  assert isinstance(b, np.ndarray)
+  np.testing.assert_array_equal(a, b)
+
+
+def test_deterministic_must_be_bool() -> None:
+  """`deterministic=` rejects non-bool values up front so a typo at the
+  callsite doesn't silently degrade to truthy-but-unintended behaviour
+  once threaded reductions land."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((3, 4))
+  b = rng.standard_normal((4, 5))
+  with pytest.raises(TypeError, match="deterministic"):
+    moeinsum.einsum("ij,jk->ik", a, b, deterministic="yes")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------
+# Size-1 dim handling (broadcast-like edge case)
+# ---------------------------------------------------------------------
+
+
+@given(
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_size_one_matmul_matches_numpy(seed: int) -> None:
+  """A label with the same size (1) on both operands must still
+  contract cleanly. Catches any "size 1 means broadcast" assumption
+  that would diverge from numpy.einsum's strict semantics."""
+  rng = np.random.default_rng(seed)
+  a = rng.standard_normal((3, 1))
+  b = rng.standard_normal((1, 5))
+  expected = np.einsum("ij,jk->ik", a, b)
+  actual = moeinsum.einsum("ij,jk->ik", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
+
+
+@given(
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_size_one_full_axes_matches_numpy(seed: int) -> None:
+  """Operand with every dim of size 1 — degenerate case that historically
+  trips numpy.einsum reshape paths."""
+  rng = np.random.default_rng(seed)
+  a = rng.standard_normal((1, 1, 1))
+  expected = np.einsum("ijk->", a)
+  actual = moeinsum.einsum("ijk->", a)
+  np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------
+# Integer-dtype bit-exact reduction
+# ---------------------------------------------------------------------
+
+
+@given(
+  m=st.integers(min_value=2, max_value=6),
+  k=st.integers(min_value=2, max_value=6),
+  n=st.integers(min_value=2, max_value=6),
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_int_matmul_bit_exact(m: int, k: int, n: int, seed: int) -> None:
+  """Integer matmul must match `a @ b` bit-exactly — no fp rounding
+  excuse. Catches any subtle truncate-on-cast in the FFI fp64 detour."""
+  rng = np.random.default_rng(seed)
+  a = rng.integers(-5, 6, size=(m, k), dtype=np.int64)
+  b = rng.integers(-5, 6, size=(k, n), dtype=np.int64)
+  out = moeinsum.einsum("ij,jk->ik", a, b)
+  assert isinstance(out, np.ndarray)
+  np.testing.assert_array_equal(out, a @ b)

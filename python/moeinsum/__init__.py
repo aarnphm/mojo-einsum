@@ -181,6 +181,7 @@ def einsum(
   accum_dtype: DTypeLike | None = None,
   dtype: DTypeLike | None = None,
   return_type: str | None = None,
+  deterministic: bool = True,
 ) -> object:
   """Compute an einsum.
 
@@ -210,11 +211,23 @@ def einsum(
                    ``"cupy"`` / ``"tensorflow"``. None = mirror the
                    first operand's framework (matches numpy.einsum /
                    torch.einsum convention).
+      deterministic: When True (default), reductions run in a fixed
+                   left-to-right order so repeat calls are bit-identical.
+                   The reference backend is always deterministic;
+                   `MaxBackend` (P5) and `NativeBackend` (P11/P12) honor
+                   this flag by serializing the reduction tree (slower)
+                   when set. Setting `deterministic=False` permits a
+                   parallel tree-reduction once those backends ship —
+                   bit-equality is not guaranteed across runs.
 
   Returns:
       The contraction result in the framework chosen by `return_type`
       (or the first operand's framework when `return_type=None`).
   """
+  if not isinstance(deterministic, bool):
+    raise TypeError(
+      f"deterministic must be bool, got {type(deterministic).__name__}"
+    )
   if backend not in _BACKENDS:
     if backend in _PLANNED_BACKENDS:
       raise NotImplementedError(
