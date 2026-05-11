@@ -16,6 +16,7 @@ from __future__ import annotations
 import moeinsum
 import numpy as np
 import pytest
+from numpy.typing import DTypeLike
 
 
 def _rand(shape: tuple[int, ...], seed: int = 0) -> np.ndarray:
@@ -104,7 +105,7 @@ def test_parity(label: str, eq: str, shapes: list[tuple[int, ...]], optimize: st
   "dtype",
   [np.float32, np.float64, np.int64],
 )
-def test_output_dtype(dtype) -> None:
+def test_output_dtype(dtype: DTypeLike) -> None:
   a = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
   b = np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float64)
   out = moeinsum.einsum("ij,jk->ik", a, b, dtype=dtype)

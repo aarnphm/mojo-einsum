@@ -1,6 +1,10 @@
-# Comparisons
+---
+title: Comparison
+date: 2026/05/10
+---
 
-## Feature parity matrix
+
+## Feature parity
 
 | Feature                        | moeinsum (v0.1)            | NumPy                | PyTorch               | JAX                   | cuTENSOR           | TBLIS          |
 | ------------------------------ | -------------------------- | -------------------- | --------------------- | --------------------- | ------------------ | -------------- |
@@ -43,25 +47,26 @@ expectation:
 	- moeinsum's `max` does TTGT to physically materializes the permute. 
 	- PyTorch/JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5–3× on these shapes. 
 	- The `native` backend's P11/P12 GETT implementation targets parity here.
-- **Tensor networks** (n > 20 operands, dense contractions): opt_einsum's greedy is suboptimal. cotengra's hypergraph paths win by orders of magnitude. moeinsum v0.1 doesn't compete here; users should use cotengra to compute the path and pass it explicitly.
+- **Tensor networks** (n > 20 operands, dense contractions):
+	- opt_einsum's greedy is suboptimal.
+	- cotengra's hypergraph paths win by orders of magnitude.
+- **Call-site overhead** (latency of `einsum("ij,jk->ik", a, b)` over hot cache):
+	- PyTorch and JAX both parse the equation, call opt_einsum, classify dims, and dispatch BMM on every call.
+	- for small tensors it can dominate the FLOPs.
+	- our JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel.
+		- Expected ~10x reduction in call-site latency for repeated small einsums.
 
-**Call-site overhead** (latency of `einsum("ij,jk->ik", a, b)` over hot cache): this is where moeinsum's design choice pays off. PyTorch and JAX both parse the equation, call opt_einsum, classify dims, and dispatch BMM on every call. The work isn't huge — microseconds — but for small tensors it can dominate the FLOPs. moeinsum's JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel. Expected ~10× reduction in call-site latency for repeated small einsums.
+## Gaps
 
-## Where moeinsum loses today
+- **No cotengra equivalent.** For tensor-network workloads, you must compute the path externally. This is a deliberate v0.1 scoping decision; opt_einsum's algorithm family covers ≤30 operands well, and that handles all ML use cases. Quantum-circuit simulation and similar genuinely need cotengra.
+- **No GETT yet.** Phase 11/12 work. Until then, awkward permutes go through TTGT, with the bandwidth cost that implies.
+- **No `random-greedy` or `branch`.** yet
+- **Limited dtypes.** v0.1 ships fp32 / fp64 internally. fp16, bf16, fp8 (e4m3, e5m2), int arrive in P9 with accumulator handling. Until then, callers should pre-cast.
+-  **No autograd.** PyTorch and JAX wrap their einsum with autograd.
 
-**No cotengra equivalent.** For tensor-network workloads, you must compute the path externally. This is a deliberate v0.1 scoping decision; opt_einsum's algorithm family covers ≤30 operands well, and that handles all ML use cases. Quantum-circuit simulation and similar genuinely need cotengra.
+## Features
 
-**No GETT yet.** Phase 11/12 work. Until then, awkward permutes go through TTGT, with the bandwidth cost that implies.
-
-**No `random-greedy` or `branch`.** opt_einsum has them; moeinsum's `path.mojo` will get them. Until then, for n=5–7 specifically, opt_einsum's `branch-all` is slightly better than greedy. Use the explicit-path API to forward opt_einsum's choice if you need this.
-
-**Limited dtypes.** v0.1 ships fp32 / fp64 internally. fp16, bf16, fp8 (e4m3, e5m2), int\* arrive in P9 with accumulator handling. Until then, callers should pre-cast.
-
-**No autograd.** moeinsum is a primitive, not a framework. PyTorch and JAX wrap their einsum with autograd; moeinsum doesn't. If you need gradients, call moeinsum from inside a wrapper that records the operation for backward. The math is well-known: einsum's gradient wrt operand i is einsum of the upstream gradient with all other operands and the original output indices rearranged. Trivial to implement but out of v0.1 scope.
-
-## Where moeinsum wins today
-
-**The architectural seam.** Backend-pluggable dispatch (`reference` / `max` / `native` / `max_graph`) means we can ship correct-and-slow on day 2, fast-and-irregular on day 30, whole-graph-fused on day 60, and the user-facing API doesn't change. PyTorch and JAX have variants of this internally but don't expose the seam to users.
+- Backend-pluggable dispatch (`reference` / `max` / `native` / `graph`) means we can ship correct-and-slow on day 2, fast-and-irregular on day 30, whole-graph-fused on day 60, and the user-facing API doesn't change. PyTorch and JAX have variants of this internally but don't expose the seam to users.
 
 **Compile-time-known paths.** When operand shapes are compile-time `alias`, the path optimizer runs in `@parameter` evaluation and emits a straight-line sequence of GEMM calls. Zero runtime parsing. Zero runtime planning. cuTENSOR 2.0 reaches the same place with NVRTC JIT — paying the JIT cost at the first call. Mojo pays it at _build_ time. (Hidden caveat: the v0.1 API takes runtime equation strings — compile-time-known paths arrive when the API exposes a `comptime` overload, planned for P10.)
 

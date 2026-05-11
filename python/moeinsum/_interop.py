@@ -20,23 +20,28 @@ keep the original dtype, route through TileTensor for zero-copy.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol, TypeGuard
 
 import numpy as np
 from numpy.typing import DTypeLike
 
-
 _ZERO_COPY_DLPACK_SOURCES = ("torch", "jax", "mlx", "cupy", "tensorflow")
 
 
-def _looks_like_dlpack_source(obj: Any) -> bool:
+class _DLPackSource(Protocol):
+  def __dlpack__(self, *, stream: object | None = None) -> object: ...
+
+  def __dlpack_device__(self) -> tuple[int, int]: ...
+
+
+def _looks_like_dlpack_source(obj: object) -> TypeGuard[_DLPackSource]:
   """True if `obj` exposes DLPack but isn't already a numpy array."""
   if isinstance(obj, np.ndarray):
     return False
   return hasattr(obj, "__dlpack__") and hasattr(obj, "__dlpack_device__")
 
 
-def to_numpy(obj: Any, *, dtype: DTypeLike = np.float64) -> np.ndarray:
+def to_numpy(obj: object, *, dtype: DTypeLike = np.float64) -> np.ndarray:
   """Convert an arbitrary array-like to a contiguous NumPy array.
 
   Prefer DLPack zero-copy when the source exposes the protocol;
@@ -57,7 +62,7 @@ def to_numpy(obj: Any, *, dtype: DTypeLike = np.float64) -> np.ndarray:
   return np.ascontiguousarray(candidate, dtype=dtype)
 
 
-def source_kind(obj: Any) -> str:
+def source_kind(obj: object) -> str:
   """Best-effort identification of the input array's framework.
 
   Returns one of "numpy", "torch", "jax", "mlx", "cupy",

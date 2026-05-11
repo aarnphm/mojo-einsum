@@ -15,13 +15,26 @@ DLPack zero-copy + JAX/PyTorch/MLX interop arrives in P8.
 
 from __future__ import annotations
 
+import os as _os
+import sysconfig as _sysconfig
+from pathlib import Path as _Path
 from typing import cast
+
+# Set MOJO_PYTHON_LIBRARY before _native is imported so the mohaus
+# editable-rebuild hook can link a libpython for the active interpreter.
+# Skipped if the user already set the env var (CI, custom builds).
+if "MOJO_PYTHON_LIBRARY" not in _os.environ:
+  _libdir = _sysconfig.get_config_var("LIBDIR")
+  _libname = _sysconfig.get_config_var("LDLIBRARY")
+  if _libdir and _libname:
+    _candidate = _Path(_libdir) / _libname
+    if _candidate.is_file():
+      _os.environ["MOJO_PYTHON_LIBRARY"] = str(_candidate)
 
 import numpy as np
 from numpy.typing import DTypeLike
 
 from ._cache import PLAN_CACHE
-from ._interop import source_kind as _source_kind
 from ._interop import to_numpy as _to_numpy
 from ._native import (
   einsum_compute_path as _einsum_compute_path_native,

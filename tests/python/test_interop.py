@@ -8,19 +8,11 @@ the always-on path is numpy + Python lists.
 from __future__ import annotations
 
 import importlib
-import sys
-from pathlib import Path
-
-import numpy as np
-import pytest
-
-# Ensure the python/ root is on sys.path (mirrors conftest behavior).
-_REPO_ROOT = Path(__file__).parent.parent.parent
-_PY_ROOT = _REPO_ROOT / "python"
-if str(_PY_ROOT) not in sys.path:
-  sys.path.insert(0, str(_PY_ROOT))
+from types import ModuleType
 
 import moeinsum
+import numpy as np
+import pytest
 from moeinsum._interop import source_kind, to_numpy
 
 
@@ -55,7 +47,7 @@ def test_einsum_accepts_python_lists() -> None:
   np.testing.assert_allclose(out, np.array(a) @ np.array(b))
 
 
-def _try_import(name: str):
+def _try_import(name: str) -> ModuleType | None:
   try:
     return importlib.import_module(name)
   except ImportError:
