@@ -1,31 +1,31 @@
-"""Benchmark CLI — `python -m moeinsum.bench`.
+"""Benchmark CLI — `moeinsum-bench` (or `python -m moeinsum.bench`).
 
-Emits per-step timing as JSON. Runs each measurement N times and reports
-the median (more robust to GC pauses than mean / min).
+Emits per-step timing as JSON. Runs each measurement N times, reports
+the median (robust to GC pauses), min, and max.
 
-Usage:
-  python -m moeinsum.bench "ij,jk->ik" --shapes 256,256 256,256
-  python -m moeinsum.bench "ij,jk,kl->il" --shapes 64,64 64,64 64,64 \\
-      --backend reference --optimize auto --repeats 100
+Single-optimizer mode (default):
+  moeinsum-bench "ij,jk->ik" --shapes 256,256 256,256
+  moeinsum-bench "ij,jk,kl->il" --shapes 64,64 64,64 64,64 \\
+      --optimize auto --repeats 100
 
-Output format (JSON to stdout):
-  {
-    "equation": "ij,jk->ik",
-    "shapes": [[256, 256], [256, 256]],
-    "backend": "reference",
-    "optimize": "auto",
-    "path": [[0, 1]],
-    "total_ms_median": 12.4,
-    "total_ms_min": 12.1,
-    "total_ms_max": 13.5,
-    "repeats": 100,
-    "platform": {
-      "machine": "arm64",
-      "system": "Darwin",
-      "release": "25.3.0"
-    },
-    "timestamp": "2026-05-11T..."
-  }
+Optimizer-sweep mode (`--sweep-optimizers`): runs every named optimizer
+in `_OPTIMIZE` against the same operands and emits a ratios table
+(median time vs. fastest):
+  moeinsum-bench "ij,jk,kl,lm->im" --shapes 8,4 4,16 16,2 2,32 \\
+      --sweep-optimizers
+
+Output JSON (single-optimizer):
+  {"equation": ..., "shapes": ..., "backend": "reference",
+   "optimize": "auto", "path": [[1, 2], [0, 1]],
+   "total_ms_median": 12.4, "total_ms_min": 12.1, "total_ms_max": 13.5,
+   "repeats": 100, "platform": {...}, "timestamp": "..."}
+
+Output JSON (sweep mode):
+  {"equation": ..., "shapes": ..., "backend": "reference",
+   "results": {"naive": {"ms_median": ..., "path": ...},
+               "greedy": {...}, ...},
+   "fastest": "greedy",
+   "ratios": {"naive": 2.4, "greedy": 1.0, ...}}
 """
 
 from __future__ import annotations
@@ -107,8 +107,18 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument(
     "--optimize",
     default="auto",
-    choices=["naive", "greedy", "optimal", "auto"],
-    help="Path optimizer algorithm",
+    help=(
+      "Path optimizer: naive / greedy / optimal / auto / "
+      "random-greedy / random-greedy-N / branch-{all,2,1}"
+    ),
+  )
+  p.add_argument(
+    "--sweep-optimizers",
+    action="store_true",
+    help=(
+      "Run every standard optimizer and report median-time ratios "
+      "instead of a single measurement"
+    ),
   )
   p.add_argument(
     "--dtype",
@@ -129,6 +139,49 @@ def main(argv: list[str] | None = None) -> int:
   shapes = _parse_shapes(args.shapes)
   dtype = np.dtype(args.dtype)
   operands = _make_operands(shapes, dtype, args.seed)
+  platform_record = {
+    "machine": platform.machine(),
+    "system": platform.system(),
+    "release": platform.release(),
+  }
+
+  if args.sweep_optimizers:
+    optimizers = ("naive", "greedy", "optimal", "auto", "random-greedy")
+    per_opt: dict[str, dict[str, object]] = {}
+    for opt in optimizers:
+      for _ in range(args.warmup):
+        _time_one(args.equation, operands, args.backend, opt)
+      timings = [
+        _time_one(args.equation, operands, args.backend, opt)
+        for _ in range(args.repeats)
+      ]
+      per_opt[opt] = {
+        "ms_median": statistics.median(timings),
+        "ms_min": min(timings),
+        "ms_max": max(timings),
+        "path": einsum_path(args.equation, *shapes, optimize=opt),
+      }
+    fastest_name = min(per_opt, key=lambda k: per_opt[k]["ms_median"])
+    fastest = per_opt[fastest_name]["ms_median"]
+    ratios = {
+      name: round(rec["ms_median"] / fastest, 3) for name, rec in per_opt.items()
+    }
+    result = {
+      "equation": args.equation,
+      "shapes": [list(s) for s in shapes],
+      "backend": args.backend,
+      "dtype": args.dtype,
+      "repeats": args.repeats,
+      "warmup": args.warmup,
+      "results": per_opt,
+      "fastest": fastest_name,
+      "ratios": ratios,
+      "platform": platform_record,
+      "timestamp": datetime.now(UTC).isoformat(),
+    }
+    json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
 
   # Warmup.
   for _ in range(args.warmup):
@@ -149,11 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     "total_ms_median": statistics.median(timings),
     "total_ms_min": min(timings),
     "total_ms_max": max(timings),
-    "platform": {
-      "machine": platform.machine(),
-      "system": platform.system(),
-      "release": platform.release(),
-    },
+    "platform": platform_record,
     "timestamp": datetime.now(UTC).isoformat(),
   }
   if args.include_path:
