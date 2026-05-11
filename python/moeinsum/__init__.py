@@ -23,6 +23,8 @@ from numpy.typing import DTypeLike
 
 from ._cache import PLAN_CACHE
 from ._cost import path_cost
+from ._interop import from_numpy as _from_numpy
+from ._interop import source_kind as _source_kind
 from ._interop import to_numpy as _to_numpy
 from ._native import (
   einsum_compute_path as _einsum_compute_path_native,
@@ -161,32 +163,45 @@ def parse_equation(eq: str) -> dict[str, object]:
 
 def einsum(
   eq: str,
-  *operands: np.ndarray,
+  *operands: object,
   backend: str = "reference",
   optimize: str | Sequence[Sequence[int]] = "auto",
   accum_dtype: DTypeLike | None = None,
   dtype: DTypeLike | None = None,
-) -> np.ndarray:
+  return_type: str | None = None,
+) -> object:
   """Compute an einsum.
 
   Args:
       eq:          NumPy-style einsum equation (e.g. ``"ij,jk->ik"``).
-      operands:    Tensor operands. NumPy ndarrays for v0.1.
-      backend:     ``"reference"`` (v0.1). ``"max"``,
-                   ``"native"``, ``"max_graph"`` land in later phases.
+      operands:    Tensor operands. Anything that exposes DLPack or
+                   `__array__` — `numpy.ndarray`, `torch.Tensor`,
+                   `jax.Array`, `mlx.array`, `cupy.ndarray`, nested
+                   Python lists.
+      backend:     ``"reference"`` (v0.1). ``"max"``, ``"native"``,
+                   ``"max_graph"`` land in later phases.
       optimize:    Path optimizer name. ``"auto"`` (default),
                    ``"greedy"``, ``"optimal"``, ``"random-greedy"``,
+                   ``"random-greedy-N"`` for any N ≥ 1,
                    ``"branch-all"`` / ``"branch-2"`` / ``"branch-1"``,
                    or ``"naive"``. Alternatively a caller-supplied
-                   explicit path ``[(i, j), ...]``; numpy.einsum / opt_einsum
-                   accept the same shape.
+                   explicit path ``[(i, j), ...]``; numpy.einsum and
+                   opt_einsum accept the same shape.
       accum_dtype: Internal accumulator precision. None = automatic
-                   (fp32 for fp16/bf16 inputs, else match input). Set
-                   explicitly to override.
-      dtype:       Output dtype; defaults to ``np.result_type(*operands)``.
+                   (fp32 for fp16/bf16 inputs, else match input). Real
+                   low-precision accumulation lands with `MaxBackend`;
+                   today the parameter is forwarded but the reference
+                   backend always accumulates in fp64.
+      dtype:       Output dtype; defaults to
+                   ``np.result_type(*operands)``.
+      return_type: ``"numpy"`` / ``"torch"`` / ``"jax"`` / ``"mlx"`` /
+                   ``"cupy"`` / ``"tensorflow"``. None = mirror the
+                   first operand's framework (matches numpy.einsum /
+                   torch.einsum convention).
 
   Returns:
-      A NumPy ndarray with the equation's output shape.
+      The contraction result in the framework chosen by `return_type`
+      (or the first operand's framework when `return_type=None`).
   """
   if backend not in _BACKENDS:
     raise ValueError(f"unknown backend {backend!r}; available: {_BACKENDS}")
@@ -203,23 +218,31 @@ def einsum(
   if not operands:
     raise ValueError("einsum requires at least one operand")
 
-  # Normalize every operand to a contiguous fp64 numpy array via the
-  # DLPack-first adapter — accepts numpy / torch / jax / mlx / cupy /
-  # tensorflow / anything implementing `__array__`. The first operand's
-  # framework decides the return type (P8 polish; v0.1 always returns
-  # numpy regardless).
+  # Lift every operand to a contiguous numpy view via DLPack-first.
+  # We *preserve* dtype here so `result_type` reflects what the user
+  # passed; the fp64 conversion is a reference-backend FFI detail that
+  # we apply at the kernel boundary, not at the API surface.
   arrays = [_to_numpy(o) for o in operands]
-  flats = [a.ravel().tolist() for a in arrays]
+
+  if dtype is None:
+    dtype = np.result_type(*arrays) if arrays else np.float64
+
+  flats = [a.astype(np.float64).ravel().tolist() for a in arrays]
   shapes = [list(a.shape) for a in arrays]
 
   flat_out, out_shape = _einsum_reference_native(eq, flats, shapes)
   out = np.array(flat_out, dtype=np.float64).reshape(tuple(out_shape))
 
-  if dtype is None:
-    dtype = np.result_type(*arrays) if arrays else np.float64
   if out.dtype != dtype:
     out = out.astype(dtype)
-  return out
+
+  # Route back to the source framework so torch in / torch out, jax in /
+  # jax out, etc. The numpy / fallback cases keep returning ndarrays.
+  if return_type is None:
+    target = _source_kind(operands[0])
+  else:
+    target = return_type
+  return _from_numpy(out, target)
 
 
 def einsum_path(
