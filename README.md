@@ -20,8 +20,8 @@ assert np.allclose(c, a @ b)
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
-- **Bench CLI**: `python -m moeinsum.bench` with JSON output.
-- **Tests**: 240 numpy-parity / parser / path / branch / explicit-path / cache / interop cases. 3 framework-tests skip when torch/jax/mlx not installed.
+- **Bench CLI**: `moeinsum-bench` script (installed by `pip install -e .`), JSON output.
+- **Tests**: 284 numpy-parity / parser / path / branch / explicit-path / cache / interop / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
 
 ## Docs
 
@@ -29,6 +29,7 @@ assert np.allclose(c, a @ b)
 - [`docs/derivations.md`](docs/derivations.md) — BMM lowering math, contraction-tree cost models, GETT, √K accumulation rule.
 - [`docs/perf.md`](docs/perf.md) — tuning guide, backend selection, profile triage.
 - [`docs/comparisons.md`](docs/comparisons.md) — scorecard vs NumPy / PyTorch / JAX / cuTENSOR / TBLIS.
+- [`docs/ffi-p5.md`](docs/ffi-p5.md) — design-spike for the MaxBackend FFI cutover.
 
 ## Install
 
@@ -47,20 +48,20 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P1    | ✅     | Reference backend + parser + plan + numpy bridge                                           |
 | P2    | ✅     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                     |
 | P3    | ✅     | Unary kernels (transpose / diagonal / sum / trace)                                         |
-| P4    | ✅     | Path optimizer: greedy + optimal-DP + auto + random-greedy + branch family                 |
-| P5    | ⏳     | `MaxBackend` dispatching to `linalg.batched_matmul` (needs TileTensor FFI)                 |
+| P4    | ✅     | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family             |
+| P5    | ⏳     | `MaxBackend` dispatching to `linalg.batched_matmul` — design-spike in `docs/ffi-p5.md`     |
 | P6    | ✅     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred     |
 | P7    | ✅     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                               |
-| P8    | ✅\*   | DLPack interop (first pass): torch / jax / mlx / cupy / tensorflow via DLPack + np.asarray |
+| P8    | ✅     | DLPack interop: dtype-preserving in/out, framework-native return (torch in → torch out)    |
 | P9    | ✅\*   | Precision (parameters wired; real low-precision lands with MaxBackend)                     |
 | P10   | ⏳     | GPU dispatch validation (target="gpu" via batched_matmul)                                  |
-| P11   | ⏳     | `NativeOptimizedBackend` CPU: GETT-style fused permute (TBLIS)                             |
-| P12   | ⏳     | `NativeOptimizedBackend` GPU SM90: WGMMA + TMA + fused permute                             |
-| P13   | ✅     | Benchmark CLI                                                                              |
-| P14   | ⏳     | `MaxGraphBackend`: whole-graph fusion via `max.graph`                                      |
-| P15   | ✅     | Docs (notation / derivations / perf / comparisons), editor-reviewed                        |
+| P11   | 🛠     | Native CPU GETT skeleton at `src/einsum/backends/native.mojo`; kernel work pending         |
+| P12   | 🛠     | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                          |
+| P13   | ✅     | Benchmark CLI (`moeinsum-bench` script)                                                    |
+| P14   | 🛠     | `MaxGraphBackend`: plan-to-graph translation shipped; `max.graph.ops` codegen pending      |
+| P15   | ✅     | Docs (notation / derivations / perf / comparisons / ffi-p5), editor-reviewed               |
 
-✅ shipped · ✅\* shipped first pass (real polish deferred to P5) · ⏳ pending.
+✅ shipped · ✅\* shipped first pass (real polish deferred to P5) · 🛠 skeleton landed, full impl pending · ⏳ pending.
 
 See [`progress.md`](progress.md) for the local working notes (gitignored).
 
