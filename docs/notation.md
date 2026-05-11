@@ -30,7 +30,7 @@ $$s = \sum_{ij} A_{ij}$$
 
 $$d_i = A_{ii}$$
 
-For a $4 \times 4$ matrix this extracts the four diagonal entries. Implementations exploit the stride trick: the diagonal is a 1D view over the same data with stride equal to `row_stride + col_stride` (for a contiguous row-major $n \times n$ matrix that's `n + 1`).
+For a $4 \times 4$ matrix this extracts the four diagonal entries. Implementations exploit the stride trick where the diagonal is a 1D view over the same data with stride equal to `row_stride + col_stride` (for a contiguous row-major $n \times n$ matrix that's `n + 1`).
 
 **Trace.** `"ii->"` is "diagonal then sum":
 
@@ -38,7 +38,7 @@ $$t = \sum_i A_{ii}$$
 
 The output is a scalar. Internally we read it as: collapse the diagonal first (the repeated `i` constraint), then sum out the surviving `i`.
 
-**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's convention is: take every label that appears exactly once across all inputs, sort alphabetically, that's your output. So `"ij"` is the same as `"ij->ij"`, and `"ii"` is the same as `"ii->"` (every label appears more than once, so the output has no labels — a scalar).
+**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's convention is to take every label that appears exactly once across all inputs, sort alphabetically, that's your output. So `"ij"` is the same as `"ij->ij"`, and `"ii"` is the same as `"ii->"` (every label appears more than once, so the output has no labels — a scalar).
 
 ## Two-operand operations
 
