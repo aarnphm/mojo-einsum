@@ -1,0 +1,46 @@
+{
+  "equation": "ij,jk,kl->il",
+  "shapes": [
+    [
+      32,
+      64
+    ],
+    [
+      64,
+      32
+    ],
+    [
+      32,
+      64
+    ]
+  ],
+  "backend": "reference",
+  "optimize": "auto",
+  "dtype": "float64",
+  "repeats": 31,
+  "warmup": 3,
+  "total_ms_median": 124.42024999836576,
+  "total_ms_min": 118.22954200033564,
+  "total_ms_max": 178.420833999553,
+  "platform": {
+    "machine": "arm64",
+    "system": "Darwin",
+    "release": "25.3.0"
+  },
+  "timestamp": "2026-05-11T22:06:41.149803+00:00",
+  "path": [
+    [
+      0,
+      1
+    ],
+    [
+      0,
+      1
+    ]
+  ],
+  "cold_ms": 126.25412499983213,
+  "hot_ms_median": 118.52783300128067,
+  "hot_ms_min": 117.08491599711124,
+  "hot_ms_max": 121.1749169997347,
+  "cache_speedup_ratio": 1.065
+}
