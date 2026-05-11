@@ -73,19 +73,19 @@ struct EinsumEquation(Copyable, Movable):
         self.label_chars = label_chars^
         self.has_explicit_output = has_explicit_output
 
-    def __copyinit__(out self, existing: Self):
-        self.inputs = existing.inputs
-        self.output = existing.output
-        self.n_labels = existing.n_labels
-        self.label_chars = existing.label_chars
-        self.has_explicit_output = existing.has_explicit_output
+    def __copyinit__(out self, take: Self):
+        self.inputs = take.inputs
+        self.output = take.output
+        self.n_labels = take.n_labels
+        self.label_chars = take.label_chars
+        self.has_explicit_output = take.has_explicit_output
 
-    def __moveinit__(out self, var existing: Self):
-        self.inputs = existing.inputs^
-        self.output = existing.output^
-        self.n_labels = existing.n_labels
-        self.label_chars = existing.label_chars^
-        self.has_explicit_output = existing.has_explicit_output
+    def __moveinit__(out self, var take: Self):
+        self.inputs = take.inputs^
+        self.output = take.output^
+        self.n_labels = take.n_labels
+        self.label_chars = take.label_chars^
+        self.has_explicit_output = take.has_explicit_output
 
     def n_operands(self) -> Int:
         return len(self.inputs)
