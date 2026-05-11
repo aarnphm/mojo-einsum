@@ -48,7 +48,19 @@ __all__ = [
 ]
 
 
-_BACKENDS = ("reference",)  # max lands in P5.
+_BACKENDS = ("reference",)
+# Backends in the plan that have a skeleton but aren't wired through the
+# FFI yet — used to produce phase-aware error messages instead of an
+# opaque "unknown backend" string when callers try them.
+_PLANNED_BACKENDS = {
+  "max": "P5 — needs the FFI to plumb TileTensor handles. "
+  "Skeleton at src/einsum/backends/max.mojo. See docs/ffi-p5.md.",
+  "native": "P11/P12 — SIMD-tiled CPU GETT + SM90 WGMMA. "
+  "Skeleton at src/einsum/backends/native.mojo.",
+  "max_graph": "P14 — Python-side plan-to-graph translation shipped; "
+  "the max.graph.ops codegen is the remaining seam. "
+  "See python/moeinsum/_max_graph.py.",
+}
 _OPTIMIZE = (
   "naive",
   "greedy",
@@ -204,6 +216,10 @@ def einsum(
       (or the first operand's framework when `return_type=None`).
   """
   if backend not in _BACKENDS:
+    if backend in _PLANNED_BACKENDS:
+      raise NotImplementedError(
+        f"backend {backend!r}: {_PLANNED_BACKENDS[backend]}"
+      )
     raise ValueError(f"unknown backend {backend!r}; available: {_BACKENDS}")
   if _is_explicit_path(optimize):
     # Validate eagerly so callers get a clear error. The reference backend

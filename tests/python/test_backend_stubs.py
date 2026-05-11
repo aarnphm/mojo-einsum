@@ -181,3 +181,52 @@ def test_spec_unary_identity_emits_no_ops() -> None:
   so the spec is empty."""
   spec = plan_to_graph_spec("ij->ij", [(3, 5)], [(0,)])
   assert spec.ops == []
+
+
+# ---------------------------------------------------------------------
+# Planned-but-unimplemented backend dispatch
+# ---------------------------------------------------------------------
+
+
+def test_einsum_native_backend_phase_aware_error() -> None:
+  """`backend="native"` is planned (P11/P12) but not wired. Callers
+  should get a NotImplementedError naming the phase and the skeleton
+  file, not an opaque "unknown backend" string."""
+  import numpy as np
+
+  import moeinsum
+
+  with pytest.raises(NotImplementedError, match="P11"):
+    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="native")
+
+
+def test_einsum_max_backend_phase_aware_error() -> None:
+  """`backend="max"` is planned (P5) but not wired. Same contract."""
+  import numpy as np
+
+  import moeinsum
+
+  with pytest.raises(NotImplementedError, match="P5"):
+    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="max")
+
+
+def test_einsum_max_graph_backend_phase_aware_error() -> None:
+  """`backend="max_graph"` is planned (P14). The plan-to-graph
+  translation is done; the codegen pass remains."""
+  import numpy as np
+
+  import moeinsum
+
+  with pytest.raises(NotImplementedError, match="P14"):
+    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="max_graph")
+
+
+def test_einsum_unknown_backend_value_error() -> None:
+  """Backends that aren't even in the plan still get the legacy
+  ValueError surface, not a phase-aware NotImplementedError."""
+  import numpy as np
+
+  import moeinsum
+
+  with pytest.raises(ValueError, match="unknown backend"):
+    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="quantum")
