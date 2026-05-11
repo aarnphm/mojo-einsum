@@ -29,7 +29,7 @@ import numpy as np
 from . import _max_graph
 
 if TYPE_CHECKING:
-  from max.driver import Device
+  from max.driver import Buffer, Device
   from max.dtype import DType
   from max.engine import Model
   from max.graph import Graph, TensorValue
@@ -263,25 +263,66 @@ def _compile(
   return _Executable(model=session.load(graph), device=device)
 
 
+def _max_dtype_for(dtype: np.dtype) -> DType:
+  from max.dtype import DType  # noqa: PLC0415
+
+  if dtype == np.dtype("float32"):
+    return DType.float32
+  if dtype == np.dtype("float64"):
+    return DType.float64
+  if dtype.name == "bfloat16":
+    return DType.bfloat16
+  raise NotImplementedError(
+    f"backend='max' supports float32/float64/bfloat16, got {dtype}. "
+    f"fp16 is GPU-only in MAX today; route through backend='max:gpu' once "
+    f"that path lands."
+  )
+
+
+def _input_buffer(arr: np.ndarray, device: Device) -> Buffer:
+  """Numpy -> MAX Buffer with a uint16 detour for bf16.
+
+  Numpy's DLPack export rejects ml_dtypes.bfloat16 (the bridge only
+  carries IEEE-recognised dtypes). bf16 and uint16 share a byte layout,
+  so we hand MAX the uint16 view and reinterpret the metadata as
+  bf16 on the MAX side. Round-trip-safe because no arithmetic happens
+  between the two views.
+  """
+  from max.driver import Buffer  # noqa: PLC0415
+  from max.dtype import DType  # noqa: PLC0415
+
+  if arr.dtype.name == "bfloat16":
+    u16 = np.ascontiguousarray(arr.view(np.uint16))
+    return Buffer.from_numpy(u16).view(DType.bfloat16, arr.shape).to(device)
+  return Buffer.from_numpy(arr).to(device)
+
+
+def _read_output(buf: Buffer) -> np.ndarray:
+  """MAX Buffer -> numpy with a uint16 detour for bf16 (inverse of `_input_buffer`)."""
+  from max.driver import CPU  # noqa: PLC0415
+  from max.dtype import DType  # noqa: PLC0415
+
+  host = buf.to(CPU())
+  if buf.dtype == DType.bfloat16:
+    import ml_dtypes  # noqa: PLC0415
+
+    u16_buf = host.view(DType.uint16, host.shape)
+    return u16_buf.to_numpy().view(np.dtype(ml_dtypes.bfloat16))
+  return host.to_numpy()
+
+
 def execute_max(
   eq: str,
   arrays: list[np.ndarray],
   path: list[tuple[int, ...]],
   backend: str,
 ) -> np.ndarray:
-  from max.driver import CPU, Buffer  # noqa: PLC0415
-  from max.dtype import DType  # noqa: PLC0415
+  from max.driver import Buffer  # noqa: PLC0415
 
   if not arrays:
     raise ValueError("einsum requires at least one operand")
   dtype = np.result_type(*arrays)
-  if dtype not in (np.dtype("float32"), np.dtype("float64")):
-    raise NotImplementedError(f"backend='max' only supports float32/float64 today, got {dtype}")
-
-  if dtype == np.dtype("float32"):
-    max_dtype = DType.float32
-  else:
-    max_dtype = DType.float64
+  max_dtype = _max_dtype_for(dtype)
 
   max_arrays = [np.ascontiguousarray(array.astype(dtype, copy=False)) for array in arrays]
   shapes = [tuple(array.shape) for array in max_arrays]
@@ -292,11 +333,11 @@ def execute_max(
       executable = _compile(eq, shapes, path, max_dtype, backend)
       _MODEL_CACHE[key] = executable
 
-  inputs = [Buffer.from_numpy(array).to(executable.device) for array in max_arrays]
+  inputs = [_input_buffer(array, executable.device) for array in max_arrays]
   result = executable.model.execute(*inputs)[0]
   if not isinstance(result, Buffer):
     raise TypeError(f"MAX model returned {type(result).__name__}, expected Buffer")
-  out = result.to(CPU()).to_numpy()
+  out = _read_output(result)
   if out.dtype != dtype:
     out = out.astype(dtype)
   return out

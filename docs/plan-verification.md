@@ -92,7 +92,7 @@ Status: **blocked** on P11/P12 (`NativeOptimizedBackend`). Skeleton at `src/eins
 | Integer-dtype bit-exact at K=256     | `test_cache_and_edges.py::test_int_bit_exact_at_k_256`                                                           |
 | `accum_dtype` validation surface     | `test_cache_and_edges.py::test_accum_dtype_validation`                                                           |
 | `deterministic` flag handshake       | `test_property.py::test_deterministic_bit_equality`                                                              |
-| K > 64 bf16 / fp32-accum drift       | **blocked** on `MaxBackend` - reference backend always accumulates in fp64, so the drift can't be exercised yet. |
+| K > 64 bf16 / fp32-accum drift       | `test_max_backend_bf16.py::test_bf16_matmul_drift_within_one_percent` (K $\in \{128, 256\}$ rel-drift $< 1\%$) + `test_bf16_drift_grows_sublinearly_in_k` (sqrt-K growth ratio $< 3\times$ from K=64 to K=256, rejecting linear-K bf16-accum regression).                          |
 
 ---
 
@@ -119,4 +119,4 @@ None. The audit-trail items - cache-bench JSON fixture and Mojo `compute_path` s
 
 ## Plan items still gated
 
-Section 5 (GETT), Section 7-row-7 (K>64 bf16 drift), and Section 8 (cross-platform bench JSON) remain blocked - GETT on P11/P12, bf16 on `_max_backend.py`'s dtype gate, the JSON on running `moeinsum-bench` on the B200 box. Design at `docs/ffi.md`. The `_interop.py` fp32-demotion bug that forces `test_einsum_jax_dlpack` into xfail is non-gated but parked at the user's prior request (xfail over fix).
+Section 5 (GETT) and Section 8 (cross-platform bench JSON) remain blocked - GETT on P11/P12, the JSON on running `moeinsum-bench` on the B200 box. Design at `docs/ffi.md`. The `_interop.py` fp32-demotion bug that forces `test_einsum_jax_dlpack` into xfail is non-gated but parked at the user's prior request (xfail over fix).
