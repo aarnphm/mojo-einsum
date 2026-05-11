@@ -15,6 +15,7 @@ DLPack zero-copy + JAX/PyTorch/MLX interop arrives in P8.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import cast
 
 import numpy as np
@@ -58,6 +59,77 @@ _OPTIMIZE = (
 )
 
 
+def _is_explicit_path(optimize: object) -> bool:
+  """True iff `optimize` looks like a caller-supplied path.
+
+  Accept any non-string sequence of step-shaped sequences. We delay the
+  per-step validation to `_validate_explicit_path` so the error message
+  carries the offending index.
+  """
+  if isinstance(optimize, str):
+    return False
+  if not isinstance(optimize, Sequence):
+    return False
+  # Empty sequence with n_operands ≤ 1 is a valid no-op path; the validator
+  # decides. Reject obvious non-paths (lists of strings, ints, etc).
+  return all(isinstance(s, Sequence) and not isinstance(s, str) for s in optimize)
+
+
+def _validate_explicit_path(
+  raw_path: Sequence[Sequence[int]],
+  n_operands: int,
+) -> list[tuple[int, ...]]:
+  """Sanity-check a caller-supplied path, return it as a list of tuples.
+
+  Working-set semantics: each pairwise step removes two operands and
+  appends one result; each unary step leaves the working set size
+  unchanged. After all steps the working set must contain exactly one
+  tensor (the output).
+
+  Raises ValueError with the offending step index on:
+    - non-int step entries
+    - out-of-range indices
+    - step arity ≠ 1 or 2
+    - lhs == rhs in a pairwise step
+    - final working set ≠ 1 tensor
+  """
+  path: list[tuple[int, ...]] = []
+  working_size = n_operands
+  for step_idx, step in enumerate(raw_path):
+    step_tuple = tuple(int(s) for s in step)
+    if len(step_tuple) == 1:
+      (idx,) = step_tuple
+      if not (0 <= idx < working_size):
+        raise ValueError(
+          f"explicit path step {step_idx}: index {idx} out of range "
+          f"[0, {working_size})"
+        )
+      path.append(step_tuple)
+    elif len(step_tuple) == 2:
+      li, ri = step_tuple
+      if not (0 <= li < working_size) or not (0 <= ri < working_size):
+        raise ValueError(
+          f"explicit path step {step_idx}: indices ({li}, {ri}) out of range "
+          f"[0, {working_size})"
+        )
+      if li == ri:
+        raise ValueError(
+          f"explicit path step {step_idx}: lhs and rhs both reference {li}"
+        )
+      working_size -= 1  # two removed, one appended
+      path.append(step_tuple)
+    else:
+      raise ValueError(
+        f"explicit path step {step_idx}: arity {len(step_tuple)} not in (1, 2)"
+      )
+
+  if working_size != 1:
+    raise ValueError(
+      f"explicit path leaves {working_size} tensors in working set; expected 1"
+    )
+  return path
+
+
 def parse_equation(eq: str) -> dict[str, object]:
   """Parse `eq` and return the structured IR.
 
@@ -75,7 +147,7 @@ def einsum(
   eq: str,
   *operands: np.ndarray,
   backend: str = "reference",
-  optimize: str = "auto",
+  optimize: str | Sequence[Sequence[int]] = "auto",
   accum_dtype: DTypeLike | None = None,
   dtype: DTypeLike | None = None,
 ) -> np.ndarray:
@@ -89,7 +161,9 @@ def einsum(
       optimize:    Path optimizer name. ``"auto"`` (default),
                    ``"greedy"``, ``"optimal"``, ``"random-greedy"``,
                    ``"branch-all"`` / ``"branch-2"`` / ``"branch-1"``,
-                   or ``"naive"``.
+                   or ``"naive"``. Alternatively a caller-supplied
+                   explicit path ``[(i, j), ...]``; numpy.einsum / opt_einsum
+                   accept the same shape.
       accum_dtype: Internal accumulator precision. None = automatic
                    (fp32 for fp16/bf16 inputs, else match input). Set
                    explicitly to override.
@@ -100,7 +174,14 @@ def einsum(
   """
   if backend not in _BACKENDS:
     raise ValueError(f"unknown backend {backend!r}; available: {_BACKENDS}")
-  if optimize not in _OPTIMIZE:
+  if _is_explicit_path(optimize):
+    # Validate eagerly so callers get a clear error. The reference backend
+    # ignores path order (it's a global-index loop), so we don't plumb the
+    # explicit path through; the validation is the only side-effect for v0.1.
+    _validate_explicit_path(
+      cast("Sequence[Sequence[int]]", optimize), len(operands)
+    )
+  elif optimize not in _OPTIMIZE:
     raise ValueError(f"unknown optimize {optimize!r}; available: {_OPTIMIZE}")
 
   if not operands:
@@ -125,16 +206,32 @@ def einsum(
   return out
 
 
-def einsum_path(eq: str, *operand_shapes: tuple[int, ...], optimize: str = "auto") -> list[tuple[int, ...]]:
+def einsum_path(
+  eq: str,
+  *operand_shapes: tuple[int, ...],
+  optimize: str | Sequence[Sequence[int]] = "auto",
+) -> list[tuple[int, ...]]:
   """Return the contraction pair sequence chosen by the planner.
+
+  Pass ``optimize=[(i, j), ...]`` to validate and echo back a caller-supplied
+  explicit path. Otherwise dispatches to the named algorithm.
 
   Caches by (equation, shape-tuple, optimize) — repeated calls with
   the same arguments are a hash lookup. See `_cache.PLAN_CACHE`.
   """
+  shapes_tuple = tuple(tuple(s) for s in operand_shapes)
+
+  if _is_explicit_path(optimize):
+    explicit_path = _validate_explicit_path(
+      cast("Sequence[Sequence[int]]", optimize), len(shapes_tuple)
+    )
+    # Caller-supplied paths bypass the LRU — the path is already
+    # materialized, caching adds nothing.
+    return explicit_path
+
   if optimize not in _OPTIMIZE:
     raise ValueError(f"unknown optimize {optimize!r}; available: {_OPTIMIZE}")
 
-  shapes_tuple = tuple(tuple(s) for s in operand_shapes)
   key = ("__einsum_path__", eq, shapes_tuple, optimize)
   cached = PLAN_CACHE.get(key)
   if cached is not None:

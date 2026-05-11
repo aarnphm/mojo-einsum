@@ -97,9 +97,11 @@ $$f(S) = \min_{\emptyset \subsetneq T \subsetneq S} \left[ f(T) + f(S \setminus 
 
 with base case $f(\{i\}) = 0$ for singletons. The answer is $f(\{1, \ldots, n\})$, and the optimal first split is recovered by recording the minimizing $T$ at each subset.
 
-Complexity: O($3^n$) time (each pair $(T, S \setminus T)$ visited once, total pairs is $3^n / 2$), O($2^n$) memory for the table. At n=16 that's 43M states, ~5 seconds on a modern CPU — usable for compile-time evaluation; impractical at n=20+.
+Complexity: $O(3^n)$ time (each pair $(T, S \setminus T)$ visited once, total pairs is $3^n / 2$), $O(2^n)$ memory for the table. At n=16 that's 43M states, ~5 seconds on a modern CPU—usable for compile-time evaluation; impractical at n=20+.
 
-The cost function we plug in matters. Pure FLOPs gives compute-optimal paths; pure memory gives memory-optimal paths; opt_einsum's default mixes them via the reduced_size heuristic applied to each step's cost. moeinsum's `path.mojo` ships FLOPs as the DP cost — fully compute-optimal — and uses reduced_size only inside the greedy.
+Pure FLOPs gives compute-optimal paths; pure memory gives memory-optimal paths; opt_einsum's default mixes them via the reduced_size heuristic applied to each step's cost.
+
+We ships FLOPs (`path.mojo`) as the DP cost—fully compute-optimal—and uses reduced_size only inside the greedy.
 
 ### Why use reduced_size as the DP cost too?
 
