@@ -209,6 +209,34 @@ def test_module_entry_invalid_equation() -> None:
   assert proc.returncode != 0
 
 
+def test_module_entry_dtype_bfloat16_routes_via_ml_dtypes() -> None:
+  """`--dtype bfloat16` should accept ml_dtypes-backed operands and
+  record dtype="bfloat16" in the JSON. The reference backend handles
+  the bf16 path via upcast-on-accumulate, so the run succeeds even
+  without MAX installed."""
+  pytest.importorskip("ml_dtypes")
+  args = _bench_args("ij,jk->ik", ["4,4", "4,4"], dtype="bfloat16")
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  assert rec["dtype"] == "bfloat16"
+  assert rec["total_ms_median"] > 0
+
+
+def test_module_entry_bfloat16_skips_numpy_comparison() -> None:
+  """bf16 + `--compare-engines numpy` must surface a clear skip
+  reason instead of letting numpy silently upgrade to fp32 and report
+  a misleading ratio."""
+  pytest.importorskip("ml_dtypes")
+  args = _bench_args("ij,jk->ik", ["4,4", "4,4"], dtype="bfloat16", compare_engines="numpy")
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  numpy_rec = rec["comparisons"]["numpy"]
+  assert numpy_rec["status"] == "skipped"
+  assert "bf16" in numpy_rec["reason"].lower() or "bfloat16" in numpy_rec["reason"].lower()
+
+
 # ---------------------------------------------------------------------
 # `moeinsum-bench` script entry (from [project.scripts])
 # ---------------------------------------------------------------------
