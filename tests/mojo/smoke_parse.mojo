@@ -9,6 +9,8 @@ without touching Python or MAX. The first build target to make work.
 
 from einsum.parse import parse, expand_ellipsis, ELLIPSIS_LABEL, EinsumEquation
 from einsum.plan import build_naive_plan, ContractionPlan
+from einsum.path import compute_path, ContractionStep
+from einsum.backends.reference import _resolve_label_sizes
 
 
 def check_basic() raises:
@@ -71,10 +73,48 @@ def check_naive_plan() raises:
     print("check_naive_plan: OK")
 
 
+def check_path_greedy() raises:
+    # Bellman matrix-chain: A:100x1, B:1x100000, C:100000x1.
+    # Greedy / optimal / auto must all pick A(BC) = [(1,2), (0,1)],
+    # not the naive (AB)C = [(0,1), (0,1)].
+    var eq = parse(String("ij,jk,kl->il"))
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(100)
+    s0.append(1)
+    shapes.append(s0^)
+    var s1 = List[Int]()
+    s1.append(1)
+    s1.append(100000)
+    shapes.append(s1^)
+    var s2 = List[Int]()
+    s2.append(100000)
+    s2.append(1)
+    shapes.append(s2^)
+    var sizes = _resolve_label_sizes(eq, shapes)
+    var path = compute_path(eq, sizes, String("greedy"))
+    if len(path) != 2:
+        raise Error(String("greedy: expected 2 steps, got ", len(path)))
+    if path[0].lhs_idx != 1 or path[0].rhs_idx != 2:
+        raise Error(
+            String(
+                "greedy: expected step 0 = (1, 2), got (",
+                path[0].lhs_idx,
+                ", ",
+                path[0].rhs_idx,
+                ")",
+            )
+        )
+    if path[1].lhs_idx != 0 or path[1].rhs_idx != 1:
+        raise Error(String("greedy: expected step 1 = (0, 1)"))
+    print("check_path_greedy: OK")
+
+
 def main() raises:
     check_basic()
     check_trace()
     check_implicit_output()
     check_ellipsis()
     check_naive_plan()
+    check_path_greedy()
     print("all parser smoke tests passed")
