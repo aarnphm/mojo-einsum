@@ -10,9 +10,12 @@ from __future__ import annotations
 import moeinsum
 import numpy as np
 import pytest
-from moeinsum._max_graph import MaxGraphBackend, is_available
+from moeinsum._max_graph import MaxGraphBackend, is_loadable
 
-pytestmark = pytest.mark.skipif(not is_available(), reason="max.graph not installed")
+pytestmark = pytest.mark.skipif(
+  not is_loadable(),
+  reason="max.graph not installed or ABI-incompatible with moeinsum._native in this env",
+)
 
 
 @pytest.mark.parametrize(

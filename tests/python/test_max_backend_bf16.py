@@ -30,18 +30,19 @@ import numpy as np
 import pytest
 
 try:
-  import importlib.util
-
-  _HAS_MAX = importlib.util.find_spec("max.graph") is not None
+  from moeinsum._max_graph import is_loadable as _is_loadable  # noqa: PLC0415
   import ml_dtypes
 
-  HAS_BF16 = _HAS_MAX
-  BFLOAT16 = np.dtype(ml_dtypes.bfloat16)
+  HAS_BF16 = _is_loadable()
+  BFLOAT16 = np.dtype(ml_dtypes.bfloat16) if HAS_BF16 else None
 except ImportError:
   HAS_BF16 = False
   BFLOAT16 = None  # type: ignore[assignment]
 
-pytestmark = pytest.mark.skipif(not HAS_BF16, reason="max.graph + ml_dtypes required for bf16 path")
+pytestmark = pytest.mark.skipif(
+  not HAS_BF16,
+  reason="max.graph + ml_dtypes required and must dlopen cleanly in this env",
+)
 
 
 @pytest.mark.parametrize("k", [128, 256])

@@ -56,6 +56,27 @@ def is_available() -> bool:
     return False
 
 
+def is_loadable() -> bool:
+  """Return True when `max._core` actually loads in this process.
+
+  Stricter than [is_available]: the install may exist on disk but fail
+  at dlopen() time. Concrete failure mode we hit in dev: this repo's
+  `_native.so` rpaths into `~/workspace/modular/bazel-bin/_solib_*`,
+  whose `libAsyncRTRuntimeGlobals.dylib` install_name collides with
+  the PyPI `max` wheel's bundled copy. If the two are ABI-incompatible
+  the first one in wins and the other's symbol lookups fail. Test
+  markers should gate on this rather than [is_available] so they skip
+  cleanly instead of hard-erroring on a dev box.
+  """
+  if not is_available():
+    return False
+  try:
+    importlib.import_module("max._core")
+    return True
+  except ImportError:
+    return False
+
+
 def require_max_graph() -> object:
   """Import and return `max.graph` or raise a clear `ImportError`."""
   if not is_available():
@@ -96,7 +117,7 @@ class DimClassification:
 class GraphSpec:
   """An abstract description of what `plan_to_graph(...)` would emit.
 
-  Each entry is a `(op_kind, payload)` pair. `op_kind` is a string  - 
+  Each entry is a `(op_kind, payload)` pair. `op_kind` is a string  -
   `"matmul"`, `"transpose"`, `"reduce_sum"`, `"diagonal"`. The payload
   is a dict whose schema depends on the op_kind. This keeps the spec
   hashable / testable / serializable without depending on max.graph.
