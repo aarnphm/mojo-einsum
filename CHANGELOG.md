@@ -24,7 +24,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 - **P8** DLPack interop: `_interop.to_numpy` preserves dtype; `_interop.from_numpy(arr, kind)` round-trips to torch / jax / mlx / cupy / tensorflow. fp64 cast lives at the FFI boundary, not the API.
 - **P9\*** Precision parameters wired (`accum_dtype`, `dtype`, `deterministic`). Real low-precision accumulation lands with `MaxBackend`; the reference backend always accumulates in fp64.
 - **P13** Bench CLI: JSON output, per-platform metadata, median/min/max timing, optional path introspection, optimizer-sweep with ratios.
-- **P15** Docs (5 files): `notation.md`, `derivations.md` (BMM lowering, path-cost models, GETT, sqrtK accumulation rule), `perf.md`, `comparisons.md` (vs opt_einsum / JAX / PyTorch / cuTENSOR / TBLIS), `ffi.md` (P5 design-spike).
+- **P15** Docs (5 files): `notation.md`, `derivations.md` (BMM lowering, path-cost models, GETT, $\sqrt{K}$ accumulation rule), `perf.md`, `comparisons.md` (vs opt_einsum / JAX / PyTorch / cuTENSOR / TBLIS), `ffi.md` (P5 design-spike).
 
 ### Skeleton (kernel/codegen pending)
 

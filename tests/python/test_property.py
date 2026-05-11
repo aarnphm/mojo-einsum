@@ -111,7 +111,7 @@ def test_parser_label_counts_consistent(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
   """`n_labels` equals the size of the union of label-ints across
-  inputs cup output."""
+  inputs plus output."""
   eq, _ = case
   ir = moeinsum.parse_equation(eq)
   inputs = cast("list[list[int]]", ir["inputs"])

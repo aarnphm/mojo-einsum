@@ -17,7 +17,7 @@ arithmetic), so the tests are mostly about pinning the contract:
     `a = size(lhs)`, `b = size(rhs)`, `c = size(out)`. Bigger = more
     memory removed by the contraction = better candidate.
   - `_flop_cost(lhs, rhs, out, sizes)` = product of all label sizes
-    in `lhs cup rhs` - the natural nested-loop bound.
+    in the lhs/rhs union - the natural nested-loop bound.
 
 We import the private helpers directly. Underscore prefix is a Mojo
 convention, not enforced; if a future refactor makes them truly

@@ -119,8 +119,8 @@ def classify_pair(
     """Build the B/K/M/N classification for one pairwise step.
 
     Mirrors JAX `_einsum` at `lax_numpy.py:3264-3293`:
-      - batch: in lhs cap rhs cap out
-      - contract: in lhs cap rhs, not in out
+      - batch: in the lhs/rhs/out intersection
+      - contract: in the lhs/rhs intersection, not in out
       - free-left (M): in lhs, in out, not in rhs
       - free-right (N): in rhs, in out, not in lhs
     """
@@ -306,7 +306,7 @@ def build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
     """Build a plan that contracts operands left-to-right.
 
     For each operand `i >= 1`, the step output carries labels in
-    (accumulator cup operand_i) still needed downstream - either in
+    the accumulator/operand union still needed downstream - either in
     `eq.output` or in any later operand.
     """
     var steps = List[PlanStep]()

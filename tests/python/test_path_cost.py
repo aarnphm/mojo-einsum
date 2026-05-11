@@ -85,7 +85,7 @@ def test_three_way_outer_product_flops() -> None:
   path = moeinsum.einsum_path(eq, (size_i,), (size_j,), (size_k,), optimize="greedy")
   cost = moeinsum.path_cost(eq, [(size_i,), (size_j,), (size_k,)], path)
   # The pair order may vary but the total cost is shape-dependent.
-  # Greedy on (i=2, j=3, k=4) picks the cheapest first pair  - 
+  # Greedy on (i=2, j=3, k=4) picks the cheapest first pair  -
   # we check the formula holds for whichever ordering it chose.
   assert cost["total_flops"] >= size_i * size_j  # at least the cheapest first step
   assert cost["peak_intermediate"] == size_i * size_j * size_k  # 24 - final output

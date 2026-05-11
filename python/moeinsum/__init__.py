@@ -205,7 +205,7 @@ def einsum(
                    `MaxBackend` (P5) and `NativeBackend` (P11/P12) honor
                    this flag by serializing the reduction tree (slower)
                    when set. Setting `deterministic=False` permits a
-                   parallel tree-reduction once those backends ship  - 
+                   parallel tree-reduction once those backends ship  -
                    bit-equality is not guaranteed across runs.
 
   Returns:

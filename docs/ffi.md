@@ -94,7 +94,7 @@ plumbing - accept `TileTensor` instead of `(UnsafePointer, shape, stride)`:
 - `diagonal_view` - new `Layout` with stride summation, no kernel
 - `reduce_sum_axes` - read from `tile.ptr()` / `tile.layout`, dispatch the
   existing SIMD reduce
-- `trace` = `diagonal_view circ reduce_sum_axes`
+- `trace` = `diagonal_view` $\circ$ `reduce_sum_axes`
 
 ## Build-config change
 

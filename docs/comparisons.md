@@ -29,13 +29,13 @@ date: 2026/05/10
 | JAX interop                  | done (DLPack, P8)   | n/a                  | via DLPack          | n/a                 | n/a           | n/a            |
 | MLX interop                  | done (DLPack, P8)   | n/a                  | n/a                 | n/a                 | n/a           | n/a            |
 
-done shipped, pending planned, out of scope out of scope. "n/a" = comparison undefined.
+`done` = shipped; `pending` = planned; `out of scope` = not planned for v0.1. "n/a" = comparison undefined.
 
 ## Performance
 
 | Workload                                    | moeinsum vs. peer                                                                                                                                     |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Matmul-shaped (`ij,jk->ik`, `bij,bjk->bik`) | +/-5% of PyTorch BMM, JAX `dot_general`, cuBLAS - lowers to MAX `linalg.batched_matmul`                                                                 |
+| Matmul-shaped (`ij,jk->ik`, `bij,bjk->bik`) | $\pm 5\%$ of PyTorch BMM, JAX `dot_general`, cuBLAS - lowers to MAX `linalg.batched_matmul`                                                             |
 | Multi-operand chains (`ij,jk,kl,lm->im`)    | Matches JAX + opt_einsum; same DP recurrence, same kernel per step                                                                                    |
 | Irregular permutes                          | TTGT today on `max` backend, matching PyTorch/JAX; cuTENSOR GETT wins ~1.5-3x. `native` P11/P12 closes this.                                          |
 | Tensor networks (n > 20)                    | opt_einsum greedy is suboptimal; cotengra wins by orders of magnitude                                                                                 |

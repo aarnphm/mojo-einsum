@@ -101,7 +101,7 @@ def test_arrow_without_lhs_is_lenient() -> None:
 
 
 def test_size_mismatch_caught_at_einsum() -> None:
-  """Same label with different sizes across operands must fail  - 
+  """Same label with different sizes across operands must fail  -
   the constraint surfaces during einsum() execution, not parse_equation()
   (parsing is structural; size checks need operand shapes)."""
   with pytest.raises(Exception, match="size"):

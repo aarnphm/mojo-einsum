@@ -140,7 +140,7 @@ def test_path_single_operand() -> None:
 def test_path_bellman_chain() -> None:
   # Classic matrix-chain demo from docs/notation.md: A:100x1, B:1x10^5,
   # C:10^5x1. Naive (AB)C costs ~2x10^7 flops with a huge intermediate;
-  # A(BC) costs ~10^5. Greedy / optimal / auto must all pick A(BC)  - 
+  # A(BC) costs ~10^5. Greedy / optimal / auto must all pick A(BC)  -
   # which in working-set indices is (1, 2) then (0, 1).
   shapes = ((100, 1), (1, 100_000), (100_000, 1))
   for algo in ("greedy", "optimal", "auto"):

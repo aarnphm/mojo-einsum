@@ -31,8 +31,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 if TYPE_CHECKING:
-  from typing_extensions import CapsuleType
   from numpy.typing import DTypeLike
+  from typing_extensions import CapsuleType
 
 import numpy as np
 

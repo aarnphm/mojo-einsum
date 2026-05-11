@@ -15,7 +15,7 @@ Cases cover:
 
 Every case runs numpy.einsum with optimize=True as the oracle. atol=1e-9
 on fp64 - the reference backend uses scalar reductions so we don't pay
-the bf16 sqrtK drift.
+the bf16 sqrt(K) drift.
 """
 
 from __future__ import annotations

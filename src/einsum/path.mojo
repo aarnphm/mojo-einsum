@@ -156,7 +156,7 @@ def _flop_cost(
 ) -> Int:
     """FLOP count for one pairwise contraction.
 
-    Equals the product of all label sizes in (lhs cup rhs) - the natural
+    Equals the product of all label sizes in the lhs/rhs union - the natural
     loop bound for any nested-loop implementation. For BMM-shaped:
     O(B * M * N * K).
     """

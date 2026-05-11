@@ -38,7 +38,7 @@ to force.
 ## Docs
 
 - [`docs/notation.md`](docs/notation.md) - einsum notation primer.
-- [`docs/derivations.md`](docs/derivations.md) - BMM lowering math, contraction-tree cost models, GETT, sqrtK accumulation rule.
+- [`docs/derivations.md`](docs/derivations.md) - BMM lowering math, contraction-tree cost models, GETT, $\sqrt{K}$ accumulation rule.
 - [`docs/perf.md`](docs/perf.md) - tuning guide, backend selection, profile triage.
 - [`docs/comparisons.md`](docs/comparisons.md) - scorecard vs NumPy / PyTorch / JAX / cuTENSOR / TBLIS.
 - [`docs/ffi.md`](docs/ffi.md) - FFI cutover design-spike for P5/P10/P11/P12.
@@ -57,24 +57,24 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 
 | Phase | Status | What                                                                                    |
 | ----- | ------ | --------------------------------------------------------------------------------------- |
-| P0    | done     | Scaffolding                                                                             |
-| P1    | done     | Reference backend + parser + plan + numpy bridge                                        |
-| P2    | done     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                  |
-| P3    | done     | Unary kernels (transpose / diagonal / sum / trace)                                      |
-| P4    | done     | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family          |
-| P5    | pending     | `MaxBackend` dispatching to `linalg.batched_matmul` - design-spike in `docs/ffi.md`     |
-| P6    | done     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred  |
-| P7    | done     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                            |
+| P0    | done   | Scaffolding                                                                             |
+| P1    | done   | Reference backend + parser + plan + numpy bridge                                        |
+| P2    | done   | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                  |
+| P3    | done   | Unary kernels (transpose / diagonal / sum / trace)                                      |
+| P4    | done   | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family          |
+| P5    | pending | `MaxBackend` dispatching to `linalg.batched_matmul` - design-spike in `docs/ffi.md`     |
+| P6    | done   | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred  |
+| P7    | done   | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                            |
 | P8    | done     | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out) |
 | P9    | done\*   | Precision (parameters wired; real low-precision lands with MaxBackend)                  |
-| P10   | pending     | GPU dispatch validation (target="gpu" via batched_matmul)                               |
-| P11   | skeleton     | Native CPU GETT skeleton at `src/einsum/backends/native.mojo`; kernel work pending      |
-| P12   | skeleton     | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                       |
-| P13   | done     | Benchmark CLI (`moeinsum-bench` script)                                                 |
-| P14   | skeleton     | `MaxGraphBackend`: plan-to-graph translation shipped; `max.graph.ops` codegen pending   |
-| P15   | done     | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed               |
+| P10   | pending | GPU dispatch validation (target="gpu" via batched_matmul)                               |
+| P11   | skeleton | Native CPU GETT skeleton at `src/einsum/backends/native.mojo`; kernel work pending      |
+| P12   | skeleton | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                       |
+| P13   | done   | Benchmark CLI (`moeinsum-bench` script)                                                 |
+| P14   | skeleton | `MaxGraphBackend`: plan-to-graph translation shipped; `max.graph.ops` codegen pending   |
+| P15   | done   | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed               |
 
-done shipped * done\* shipped first pass (real polish deferred to P5) * skeleton skeleton landed, full impl pending * pending pending.
+`done` = shipped; `done\*` = shipped first pass, real polish deferred to P5; `skeleton` = scaffolding landed, full implementation pending; `pending` = not shipped yet.
 
 See [`progress.md`](progress.md) for the local working notes (gitignored).
 
