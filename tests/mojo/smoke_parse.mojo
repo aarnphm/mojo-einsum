@@ -11,6 +11,9 @@ from einsum.parse import parse, expand_ellipsis, ELLIPSIS_LABEL, EinsumEquation
 from einsum.plan import build_naive_plan, ContractionPlan
 from einsum.path import compute_path, ContractionStep
 from einsum.backends.reference import _resolve_label_sizes
+# Import-only check — confirms the skeleton compiles. Calling
+# `execute_native(...)` would raise; we just need the symbol to resolve.
+from einsum.backends.native import execute_native
 
 
 def check_basic() raises:
@@ -154,6 +157,80 @@ def check_path_branch() raises:
     print("check_path_branch: OK")
 
 
+def check_path_random_greedy_n() raises:
+    # `random-greedy-N` must parse the trailing digits and dispatch to
+    # random_greedy_path with N trials. On the Bellman chain, every
+    # trial count must agree with greedy/optimal.
+    var eq = parse(String("ij,jk,kl->il"))
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(100)
+    s0.append(1)
+    shapes.append(s0^)
+    var s1 = List[Int]()
+    s1.append(1)
+    s1.append(100000)
+    shapes.append(s1^)
+    var s2 = List[Int]()
+    s2.append(100000)
+    s2.append(1)
+    shapes.append(s2^)
+    var sizes = _resolve_label_sizes(eq, shapes)
+
+    var optimal = compute_path(eq, sizes, String("optimal"))
+    var rg1 = compute_path(eq, sizes, String("random-greedy-1"))
+    var rg64 = compute_path(eq, sizes, String("random-greedy-64"))
+
+    if len(rg1) != 2 or len(rg64) != 2:
+        raise Error(String("random-greedy-N: expected 2 steps"))
+    if (
+        rg1[0].lhs_idx != optimal[0].lhs_idx
+        or rg1[0].rhs_idx != optimal[0].rhs_idx
+    ):
+        raise Error(String("random-greedy-1: disagrees with optimal on Bellman"))
+    if (
+        rg64[0].lhs_idx != optimal[0].lhs_idx
+        or rg64[0].rhs_idx != optimal[0].rhs_idx
+    ):
+        raise Error(String("random-greedy-64: disagrees with optimal on Bellman"))
+    print("check_path_random_greedy_n: OK")
+
+
+def check_path_invalid_random_greedy() raises:
+    # Suffix must be numeric and ≥ 1.
+    var eq = parse(String("ij,jk->ik"))
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(2)
+    s0.append(3)
+    shapes.append(s0^)
+    var s1 = List[Int]()
+    s1.append(3)
+    s1.append(4)
+    shapes.append(s1^)
+    var sizes = _resolve_label_sizes(eq, shapes)
+
+    # `random-greedy-0` must raise.
+    var raised = False
+    try:
+        var _path = compute_path(eq, sizes, String("random-greedy-0"))
+    except:
+        raised = True
+    if not raised:
+        raise Error(String("random-greedy-0 should have raised"))
+
+    # `random-greedy-abc` must raise.
+    raised = False
+    try:
+        var _path = compute_path(eq, sizes, String("random-greedy-abc"))
+    except:
+        raised = True
+    if not raised:
+        raise Error(String("random-greedy-abc should have raised"))
+
+    print("check_path_invalid_random_greedy: OK")
+
+
 def main() raises:
     check_basic()
     check_trace()
@@ -162,4 +239,10 @@ def main() raises:
     check_naive_plan()
     check_path_greedy()
     check_path_branch()
+    check_path_random_greedy_n()
+    check_path_invalid_random_greedy()
+    # `execute_native` is import-only — calling it would raise the
+    # Phase 11/12 NotImplementedError, which we want to defer until the
+    # kernel work actually starts.
+    _ = execute_native
     print("all parser smoke tests passed")
