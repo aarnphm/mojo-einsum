@@ -10,8 +10,8 @@ _see also [[notation|Notation]] for more information._
 
 > [!important]
 >
-> The central claim of practical einsum implementation is that _any two-operand contraction reduces to a batched matrix-matrix multiply, after at most one permutation per operand_. 
-> 
+> The central claim of practical einsum implementation is that _any two-operand contraction reduces to a batched matrix-matrix multiply, after at most one permutation per operand_.
+>
 > This is JAX's `einsum` implementation, PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to under the hood.
 
 Take a two-operand contraction `lhs,rhs->out` with labels classified into [[notation#four sets]]:
@@ -33,36 +33,38 @@ where $(b)$ is the flattened batch index, $(m)$ flattens all M dims, etc. We not
 
 $$C_{(b),(m),(n)} = \sum_{(k)} L_{(b),(m),(k)} \, R_{(b),(k),(n)}$$
 
-This is the batched matmul, of $|B|$-batched matrices, where each batch element is $(|M_{\text{flat}}|, |K_{\text{flat}}|) \times (|K_{\text{flat}}|, |N_{\text{flat}}|) \to  (|M_{\text{flat}}|, |N_{\text{flat}}|)$. 
+which is **exactly a batched matmul** of $|B|$-batched matrices, where each batch element is `(|M_flat|, |K_flat|) × (|K_flat|, |N_flat|) → (|M_flat|, |N_flat|)`. Finally reshape `C` back to the `(b, m, n)` axis-labeled tensor and permute its axes to match `out_labels` order.
 
-Finally we reshape `C` back to the `(b, m, n)` axis-labeled tensor and permute its axes to match `out_labels` order.
-
-There is either a reshape (zero-copy per strides), a permut, or a batched GEMM.
+There is either a reshape (zero-copy per strides), a permute, or a batched GEMM.
 
 ### When is the permute free?
 
-A permutation is free _iff_ it can be expressed as a layout change with no data movement. For row-major contiguous input, this requires the target permutation to coincide with the natural memory order. In practice:
+> [!important]
+>
+> A permutation is free _iff_ it can be expressed as a layout change with no data movement.
 
-- `(M, K) → (M, K)` is free.
-- `(K, M) → (M, K)` requires a physical transpose unless `K = 1` or `M = 1`.
-- `(B1, B2, M, K) → (B1*B2, M, K)` is free (flattening of contiguous dims).
-- `(M, B, K) → (B, M, K)` requires physical movement.
+For row-major contiguous input, this requires the target permutation to coincide with the natural memory order. In practice:
 
-Good implementations dispatch to `linalg.batched_matmul`'s `transpose_a` / `transpose_b` flags when the would-be permutation is exactly a 2D transpose of the inner block; this lets cuBLAS / Apple BLAS handle it as a packing variant rather than a separate kernel. For more general permutations, you either:
+- $(M, K) \to (M, K)$ is free.
+- $(K, M) \to (M, K)$ requires a physical transpose unless $K = 1$ or $M = 1$.
+- $(B1, B2, M, K) \to (B1*B2, M, K)$ is free (flattening of contiguous dims).
+- $(M, B, K) → (B, M, K)$ requires physical movement.
 
-1. Materialize the permute into a fresh buffer (TTGT — Transpose-Transpose-GEMM-Transpose).
-2. Fuse the permute into the GEMM's tile-loading code (GETT — see §3).
+The backend dispatches to `linalg.batched_matmul`'s `transpose_a` / `transpose_b` flags when the would-be permutation is exactly a 2D transpose of the inner block; this lets cuBLAS / Apple BLAS handle it as a packing variant rather than a separate kernel. For more general permutations, you either:
 
-The moeinsum `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` will do (2). The plan IR (`plan.mojo`) records the required permutations as `out_permutation` so backends can decide.
+1. Materialize the permute into a fresh buffer (TTGT—Transpose-Transpose-GEMM-Transpose).
+2. Fuse the permute into the GEMM's tile-loading code (see [[#3. GETT GEMM-like Tensor-Tensor multiplication|GETT]]).
+
+The `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` will do (2).
 
 ### What about the inner BMM kernel?
 
-Once we're at `(B, M, K) × (B, K, N) → (B, M, N)` shape, the workhorse is `linalg.batched_matmul` from `~/workspace/modular/max/kernels/src/linalg/bmm.mojo`. It dispatches:
+Once we're at $(B, M, K) \times (B, K, N) \to (B, M, N)$ shape, the workhorse is `linalg.batched_matmul` from `~/workspace/modular/max/kernels/src/linalg/bmm.mojo`. It dispatches:
 
-- SM90 / Hopper → `warp_specialize_gemm_with_multicasting` with WGMMA + TMA.
-- SM100 / Blackwell → analogous TCGEN05-based kernel.
-- CPU + Apple Silicon → `apple_accelerate.mojo` calls vDSP/AMX through the Accelerate framework.
-- CPU + AVX-512 → BLIS-style micro-kernel with packing.
+- SM90/Hopper $\to$ `warp_specialize_gemm_with_multicasting` with WGMMA + TMA.
+- SM100/Blackwell $\to$ analogous TCGEN05-based kernel.
+- CPU + Apple Silicon $\to$ `apple_accelerate.mojo` calls vDSP/AMX through the Accelerate framework.
+- CPU + AVX-512 $\to$ BLIS-style micro-kernel with packing.
 
 This is the "free win" of the BMM lowering: you inherit the work of every BLAS author since 1979. The price is that for non-BMM-shaped contractions — small K, small M, weird strides — you pay for indexing math the BMM kernel doesn't expect. §3 discusses the workaround.
 
