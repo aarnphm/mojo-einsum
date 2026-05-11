@@ -33,9 +33,11 @@ where $(b)$ is the flattened batch index, $(m)$ flattens all M dims, etc. We not
 
 $$C_{(b),(m),(n)} = \sum_{(k)} L_{(b),(m),(k)} \, R_{(b),(k),(n)}$$
 
-which is **exactly a batched matmul** of $|B|$-batched matrices, where each batch element is `(|M_flat|, |K_flat|) × (|K_flat|, |N_flat|) → (|M_flat|, |N_flat|)`. Finally reshape `C` back to the `(b, m, n)` axis-labeled tensor and permute its axes to match `out_labels` order.
+This is the batched matmul, of $|B|$-batched matrices, where each batch element is $(|M_{\text{flat}}|, |K_{\text{flat}}|) \times (|K_{\text{flat}}|, |N_{\text{flat}}|) \to  (|M_{\text{flat}}|, |N_{\text{flat}}|)$. 
 
-That's the whole lowering. Every step is either a reshape (zero-copy when strides permit), a permute, or a batched GEMM. There is no other primitive needed.
+Finally we reshape `C` back to the `(b, m, n)` axis-labeled tensor and permute its axes to match `out_labels` order.
+
+There is either a reshape (zero-copy per strides), a permut, or a batched GEMM.
 
 ### When is the permute free?
 
