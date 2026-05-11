@@ -47,7 +47,7 @@ python -c "import mojo_einsum; import numpy as np; print(mojo_einsum.einsum('ij,
 | P2    | partial | Parser polish, advanced grammar edge cases                                         |
 | P3    | ✅      | Unary kernels (transpose / diagonal / sum / trace)                                 |
 | P4    | ✅      | Path optimizer (greedy / optimal-DP / auto). Random-greedy / branch in polish pass |
-| P5    | ⏳      | `MaxKernelsBackend` dispatching to `linalg.batched_matmul`                         |
+| P5    | ⏳      | `MaxBackend` dispatching to `linalg.batched_matmul`                         |
 | P6    | ⏳      | Multi-operand orchestration + ContractionContext arena                             |
 | P7    | ✅      | JIT plan cache (Python-side LRU)                                                   |
 | P8    | ⏳      | DLPack zero-copy (numpy / torch / jax / mlx interop)                               |
@@ -70,7 +70,7 @@ We create a small plan IR to let backend decides how to consume this.
 - The plan builder classifies each step's dims into the four-bucket B/K/M/N taxonomy.
 - A backend consumes the plan and decides how each step executes
   - the `reference` backend uses a naive global-index loop
-  - `max_kernels` dispatches to MAX's `linalg.batched_matmul`;
+  - `max` dispatches to MAX's `linalg.batched_matmul`;
   - `native` runs our own SIMD/GPU kernels with GETT-style fused permute;
   - `max_graph` lifts the plan to a MAX graph for whole-graph fusion.
 

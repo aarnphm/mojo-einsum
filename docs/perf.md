@@ -4,7 +4,7 @@ This page is the user-facing companion to `derivations.md`. The math there expla
 
 ## When to choose which backend
 
-mojo-einsum ships four backends; the default `max_kernels` is right for almost everything. The exceptions are worth knowing.
+mojo-einsum ships four backends; the default `max` is right for almost everything. The exceptions are worth knowing.
 
 **`reference`** — naive nested loop, fp64 internally. Use it for:
 
@@ -14,7 +14,7 @@ mojo-einsum ships four backends; the default `max_kernels` is right for almost e
 
 Never use `reference` for anything bigger than ~10000 total elements. It scales O(product-of-all-label-sizes).
 
-**`max_kernels`** — lowers each pairwise step to `linalg.batched_matmul`. Use it for:
+**`max`** — lowers each pairwise step to `linalg.batched_matmul`. Use it for:
 
 - Everything you'd normally use `numpy.einsum`, `torch.einsum`, or `jax.numpy.einsum` for. ML-shaped contractions, batched matmuls, multi-step chains under ~10 operands.
 - CPU (Apple Silicon, AVX-512) — the matmul dispatcher handles platform selection. You get vDSP/AMX on Mac, BLIS-style packed AVX-512 on Intel/AMD, NEON on ARM.
@@ -24,7 +24,7 @@ The matmul dispatch is where almost all the engineering effort has gone — that
 
 **`native`** — our own GETT-style kernels. Use when:
 
-- The contraction has a heavy permute that `max_kernels` would materialize. Pattern: any contraction where the contracted dims aren't naturally adjacent and they account for ≥ 30% of total work. Profile to confirm.
+- The contraction has a heavy permute that `max` would materialize. Pattern: any contraction where the contracted dims aren't naturally adjacent and they account for ≥ 30% of total work. Profile to confirm.
 - You need fp16 / bf16 / fp8 micro-control. The `native` path lets the accumulator-precision choice flow into the WGMMA/MFMA opcode selection in a way that `linalg.batched_matmul`'s parameter doesn't expose granularly.
 
 In v0.1 this backend is a stub; full GETT lands in Phase 11 / 12.
@@ -83,7 +83,7 @@ mojo-einsum exposes a `deterministic=True` flag that forces serial K-summation. 
 Before tuning anything, profile. A `mojo-einsum-bench` CLI ships in P13 and emits per-step timing as JSON:
 
 ```bash
-mojo-einsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max_kernels --target cpu
+mojo-einsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max --target cpu
 ```
 
 ```json
@@ -109,11 +109,11 @@ The per-step `gflops` tells you whether the matmul kernel is hot. If it's <50% o
 
 **NVIDIA Hopper (H100, H200)**: WGMMA + TMA are the inner kernel. The `linalg.batched_matmul` GPU path uses `warp_specialize_gemm_with_multicasting`. Peak fp16/bf16 throughput requires `M ≥ 64`, `N ≥ 128`, `K` a multiple of 16. Smaller contractions hit the small-matrix slow path. If your einsum lowers to such a shape, consider whether the path optimizer is choosing a suboptimal intermediate — sometimes a different `optimize=` setting produces a better-shaped intermediate.
 
-**NVIDIA Blackwell (B100, B200)**: TCGEN05 + UMMA. Similar story to Hopper but with stricter alignment requirements. mojo-einsum's `max_kernels` backend handles this transparently when `target="gpu"`.
+**NVIDIA Blackwell (B100, B200)**: TCGEN05 + UMMA. Similar story to Hopper but with stricter alignment requirements. mojo-einsum's `max` backend handles this transparently when `target="gpu"`.
 
 **AMD MI300X**: MFMA tensor cores via Composable Kernel. Peak fp16 requires `M, N` multiples of 32 (vs 64 on Hopper). The matmul dispatcher knows this. For odd shapes, performance suffers more than on NVIDIA — AMD's mixed-shape kernels are less mature.
 
-## When `max_kernels` is slow
+## When `max` is slow
 
 Three diagnostic questions:
 
@@ -123,4 +123,4 @@ Three diagnostic questions:
 
 ## Comparisons
 
-For the long-form comparison table — feature parity, perf in canonical contractions, install / dep complexity — see `comparisons.md`. Headline: `max_kernels` matches PyTorch / JAX / NumPy on ML-shaped contractions, beats them on call-site overhead (via the JIT cache, P7), and loses to cuTENSOR for the moment on irregular shapes that need GETT.
+For the long-form comparison table — feature parity, perf in canonical contractions, install / dep complexity — see `comparisons.md`. Headline: `max` matches PyTorch / JAX / NumPy on ML-shaped contractions, beats them on call-site overhead (via the JIT cache, P7), and loses to cuTENSOR for the moment on irregular shapes that need GETT.

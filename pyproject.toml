@@ -1,10 +1,10 @@
 [build-system]
 requires = [
   "mohaus>=0.1,<0.2",
-  "mojo==1.0.0b1",
-  "mojo-compiler==1.0.0b1",
-  "mojo-compiler-mojo-libs==1.0.0b1",
-  "mojo-lldb-libs==1.0.0b1",
+  "mojo==1.0.0b2.dev2026051006",
+  "mojo-compiler==1.0.0b2.dev2026051006",
+  "mojo-compiler-mojo-libs==1.0.0b2.dev2026051006",
+  "mojo-lldb-libs==1.0.0b2.dev2026051006",
 ]
 build-backend = "mohaus.backend"
 

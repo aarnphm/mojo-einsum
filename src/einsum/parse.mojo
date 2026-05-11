@@ -37,6 +37,7 @@ comptime ELLIPSIS_LABEL: Int = -1
 """Sentinel for the `...` token. Expanded to fresh labels in `expand_ellipsis`."""
 
 
+@fieldwise_init
 struct EinsumEquation(Copyable, Movable):
     """Parsed einsum equation in canonical IR form.
 
@@ -58,34 +59,6 @@ struct EinsumEquation(Copyable, Movable):
     var n_labels: Int
     var label_chars: List[String]
     var has_explicit_output: Bool
-
-    def __init__(
-        out self,
-        var inputs: List[List[Int]],
-        var output: List[Int],
-        n_labels: Int,
-        var label_chars: List[String],
-        has_explicit_output: Bool,
-    ):
-        self.inputs = inputs^
-        self.output = output^
-        self.n_labels = n_labels
-        self.label_chars = label_chars^
-        self.has_explicit_output = has_explicit_output
-
-    def __copyinit__(out self, take: Self):
-        self.inputs = take.inputs
-        self.output = take.output
-        self.n_labels = take.n_labels
-        self.label_chars = take.label_chars
-        self.has_explicit_output = take.has_explicit_output
-
-    def __moveinit__(out self, var take: Self):
-        self.inputs = take.inputs^
-        self.output = take.output^
-        self.n_labels = take.n_labels
-        self.label_chars = take.label_chars^
-        self.has_explicit_output = take.has_explicit_output
 
     def n_operands(self) -> Int:
         return len(self.inputs)

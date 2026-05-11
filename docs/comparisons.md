@@ -34,11 +34,11 @@ Legend: ✅ shipped, ⏳ planned, ❌ not in scope. "n/a" means the comparison d
 
 Benchmark suite ships with P13; this section is the _predicted_ placement based on architecture. Headline expectations:
 
-**Matmul-shaped einsums** (`ij,jk->ik`, `bij,bjk->bik`): mojo-einsum's `max_kernels` backend lowers directly to `linalg.batched_matmul`. Same kernel as MAX, so within noise of MAX's matmul calls. Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes. The differentiator at this shape is _call-site overhead_ — see below.
+**Matmul-shaped einsums** (`ij,jk->ik`, `bij,bjk->bik`): mojo-einsum's `max` backend lowers directly to `linalg.batched_matmul`. Same kernel as MAX, so within noise of MAX's matmul calls. Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes. The differentiator at this shape is _call-site overhead_ — see below.
 
 **Multi-operand chains** (`ij,jk,kl,lm->im`): same matmul kernel for each step, plus path-optimizer choice. mojo-einsum's `optimal` matches opt_einsum's `optimal` exactly (same algorithm). Should be functionally identical to JAX + opt_einsum on these workloads.
 
-**Irregular contractions** (heavy permute, awkward strides): mojo-einsum's `max_kernels` does TTGT — physically materializes the permute. PyTorch / JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5–3× on these shapes. The `native` backend's P11/P12 GETT implementation targets parity here.
+**Irregular contractions** (heavy permute, awkward strides): mojo-einsum's `max` does TTGT — physically materializes the permute. PyTorch / JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5–3× on these shapes. The `native` backend's P11/P12 GETT implementation targets parity here.
 
 **Tensor networks** (n > 20 operands, dense contractions): opt_einsum's greedy is suboptimal. cotengra's hypergraph paths win by orders of magnitude. mojo-einsum v0.1 doesn't compete here; users should use cotengra to compute the path and pass it explicitly.
 
@@ -58,7 +58,7 @@ Benchmark suite ships with P13; this section is the _predicted_ placement based 
 
 ## Where mojo-einsum wins today
 
-**The architectural seam.** Backend-pluggable dispatch (`reference` / `max_kernels` / `native` / `max_graph`) means we can ship correct-and-slow on day 2, fast-and-irregular on day 30, whole-graph-fused on day 60, and the user-facing API doesn't change. PyTorch and JAX have variants of this internally but don't expose the seam to users.
+**The architectural seam.** Backend-pluggable dispatch (`reference` / `max` / `native` / `max_graph`) means we can ship correct-and-slow on day 2, fast-and-irregular on day 30, whole-graph-fused on day 60, and the user-facing API doesn't change. PyTorch and JAX have variants of this internally but don't expose the seam to users.
 
 **Compile-time-known paths.** When operand shapes are compile-time `alias`, the path optimizer runs in `@parameter` evaluation and emits a straight-line sequence of GEMM calls. Zero runtime parsing. Zero runtime planning. cuTENSOR 2.0 reaches the same place with NVRTC JIT — paying the JIT cost at the first call. Mojo pays it at _build_ time. (Hidden caveat: the v0.1 API takes runtime equation strings — compile-time-known paths arrive when the API exposes a `comptime` overload, planned for P10.)
 

@@ -30,8 +30,8 @@ Implementation notes:
     dtypes lifts to a `@parameter` over `DType` later (P9).
 """
 
-from collections import List
-from memory import UnsafePointer
+from std.collections import List
+from std.memory import UnsafePointer
 from einsum.parse import EinsumEquation
 
 
@@ -50,8 +50,8 @@ def _resolve_label_sizes(
         sizes.append(-1)
 
     for op_idx in range(eq.n_operands()):
-        var labels = eq.inputs[op_idx]
-        var shape = operand_shapes[op_idx]
+        ref labels = eq.inputs[op_idx]
+        ref shape = operand_shapes[op_idx]
         if len(labels) != len(shape):
             raise Error(
                 String(
@@ -116,10 +116,10 @@ def _flat_offset(
 
 def execute_reference(
     eq: EinsumEquation,
-    operand_data: List[UnsafePointer[Float64]],
+    operand_data: List[UnsafePointer[Float64, MutAnyOrigin]],
     operand_shapes: List[List[Int]],
     operand_strides: List[List[Int]],
-    output_data: UnsafePointer[Float64],
+    output_data: UnsafePointer[Float64, MutAnyOrigin],
     output_strides: List[Int],
 ) raises -> None:
     """Reference einsum: brute-force walk of every label assignment.

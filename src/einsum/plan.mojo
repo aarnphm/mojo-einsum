@@ -2,7 +2,7 @@
 
 The plan is a backend-agnostic record of *what* to compute. Built from an
 `EinsumEquation` + operand shapes; consumed by any backend (reference /
-max_kernels / native / max_graph) to drive execution.
+max / native / max_graph) to drive execution.
 
 A plan is an ordered list of `PlanStep`s. Each step is one of:
   - `UnaryStep`: a single-operand op (reduce / diagonal / trace / transpose).

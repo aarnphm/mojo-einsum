@@ -2,7 +2,7 @@
 
 For v0.1:
   - `einsum(eq, *operands, backend, optimize, accum_dtype)` against
-    numpy ndarrays. The reference backend ships now; max_kernels /
+    numpy ndarrays. The reference backend ships now; max /
     native / max_graph land in later phases.
   - `einsum_path(eq, *shapes, optimize)` returns the contraction pair
     sequence the planner chose.
@@ -29,7 +29,7 @@ from ._native import (
 __all__ = ["einsum", "einsum_path", "parse_equation", "PLAN_CACHE"]
 
 
-_BACKENDS = ("reference",)  # max_kernels lands in P5.
+_BACKENDS = ("reference",)  # max lands in P5.
 _OPTIMIZE = ("naive", "greedy", "optimal", "auto")
 
 
@@ -59,7 +59,7 @@ def einsum(
     Args:
         eq:          NumPy-style einsum equation (e.g. ``"ij,jk->ik"``).
         operands:    Tensor operands. NumPy ndarrays for v0.1.
-        backend:     ``"reference"`` (v0.1). ``"max_kernels"``,
+        backend:     ``"reference"`` (v0.1). ``"max"``,
                      ``"native"``, ``"max_graph"`` land in later phases.
         optimize:    Path optimizer name. ``"auto"`` (default),
                      ``"greedy"``, ``"optimal"``, or ``"naive"``.

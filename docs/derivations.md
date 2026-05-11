@@ -39,7 +39,7 @@ Good implementations dispatch to `linalg.batched_matmul`'s `transpose_a` / `tran
 1. Materialize the permute into a fresh buffer (TTGT — Transpose-Transpose-GEMM-Transpose).
 2. Fuse the permute into the GEMM's tile-loading code (GETT — see §3).
 
-The mojo-einsum `MaxKernelsBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` will do (2). The plan IR (`plan.mojo`) records the required permutations as `out_permutation` so backends can decide.
+The mojo-einsum `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` will do (2). The plan IR (`plan.mojo`) records the required permutations as `out_permutation` so backends can decide.
 
 ### What about the inner BMM kernel?
 
@@ -172,7 +172,7 @@ fp32 accumulation with bf16 inputs: $u \sqrt{K} \approx 1.2 \times 10^{-7} \cdot
 
 For any einsum with $K > 64$ and low-precision inputs, use a higher-precision accumulator. cuBLAS bf16 GEMMs default to `CUBLAS_COMPUTE_32F` accumulation; cuTENSOR bf16 contractions default to `CUTENSOR_COMPUTE_32F`. The only place bf16-accumulating bf16 is sane is when $K$ is statically known to be small (e.g. 16 in some attention heads).
 
-mojo-einsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16 or bf16). The `MaxKernelsBackend` forwards this to `linalg.batched_matmul`'s compute-type parameter; the reference backend ignores it (always fp64 internally for v0.1) and is the source of truth for numerical regression testing.
+mojo-einsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16 or bf16). The `MaxBackend` forwards this to `linalg.batched_matmul`'s compute-type parameter; the reference backend ignores it (always fp64 internally for v0.1) and is the source of truth for numerical regression testing.
 
 ### Pairwise vs serial summation
 

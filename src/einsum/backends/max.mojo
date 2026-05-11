@@ -32,7 +32,7 @@ are stubbed until the FFI side is upgraded. See `docs/derivations.md`
 choice.
 """
 
-from memory import UnsafePointer
+from std.memory import UnsafePointer
 
 from einsum.parse import EinsumEquation
 from einsum.plan import (
@@ -51,12 +51,12 @@ from einsum.plan import (
 # Backend entry point
 # ─────────────────────────────────────────────────────────────────────
 
-def execute_max_kernels(
+def execute_max(
     plan: ContractionPlan,
-    operand_data: List[UnsafePointer[Float64]],
+    operand_data: List[UnsafePointer[Float64, MutAnyOrigin]],
     operand_shapes: List[List[Int]],
     operand_strides: List[List[Int]],
-    out_ptr: UnsafePointer[Float64],
+    out_ptr: UnsafePointer[Float64, MutAnyOrigin],
     out_shape: List[Int],
     out_strides: List[Int],
 ) raises:
@@ -74,7 +74,7 @@ def execute_max_kernels(
     """
     raise Error(
         String(
-            "execute_max_kernels: not yet implemented (Phase 5 work). "
+            "execute_max: not yet implemented (Phase 5 work). "
             "Use backend='reference' for now."
         )
     )

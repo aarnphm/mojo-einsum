@@ -12,7 +12,8 @@ Exposed callables (consumed by the Python wrapper):
 from std.os import abort
 from std.python import PythonObject, Python
 from std.python.bindings import PythonModuleBuilder
-from memory import UnsafePointer
+from std.memory import UnsafePointer
+from std.memory.unsafe_pointer import alloc
 
 from einsum.parse import EinsumEquation, parse, expand_ellipsis, ELLIPSIS_LABEL
 from einsum.plan import (
@@ -53,7 +54,7 @@ def parse_equation_py(eq_obj: PythonObject) raises -> PythonObject:
     var inputs_py = Python.evaluate("[]")
     for op_idx in range(len(eq.inputs)):
         var inner = Python.evaluate("[]")
-        var op = eq.inputs[op_idx]
+        ref op = eq.inputs[op_idx]
         for j in range(len(op)):
             inner.append(PythonObject(op[j]))
         inputs_py.append(inner)
@@ -89,7 +90,7 @@ def _pylist_shapes_to_mojo(
         var rank = Int(len(shape_obj))
         var shape = List[Int]()
         for j in range(rank):
-            shape.append(Int(shape_obj[j]))
+            shape.append(Int(py=shape_obj[j]))
         out.append(shape^)
     return out^
 
@@ -142,7 +143,7 @@ def einsum_reference_py(
 
     # Copy each operand into a Mojo-var Float64 buffer (zero-copy
     # DLPack path is P8 work).
-    var data_ptrs = List[UnsafePointer[Float64]]()
+    var data_ptrs = List[UnsafePointer[Float64, MutAnyOrigin]]()
     var strides_list = List[List[Int]]()
     for op_idx in range(eq.n_operands()):
         var flat = operands_flat_obj[op_idx]
@@ -161,9 +162,9 @@ def einsum_reference_py(
                     expected_elems,
                 )
             )
-        var ptr = UnsafePointer[Float64].alloc(n_elems)
+        var ptr = alloc[Float64](n_elems)
         for i in range(n_elems):
-            ptr[i] = Float64(flat[i])
+            ptr[i] = Float64(py=flat[i])
         data_ptrs.append(ptr)
         strides_list.append(_row_major_strides(operand_shapes[op_idx]))
 
@@ -172,7 +173,7 @@ def einsum_reference_py(
     for i in range(len(out_shape)):
         out_n *= out_shape[i]
     var out_alloc_n = out_n if out_n > 0 else 1
-    var out_ptr = UnsafePointer[Float64].alloc(out_alloc_n)
+    var out_ptr = alloc[Float64](out_alloc_n)
     for i in range(out_alloc_n):
         out_ptr[i] = 0.0
 
@@ -223,15 +224,15 @@ def einsum_path_py(
 
     var pairs = Python.evaluate("[]")
     for step_idx in range(len(plan.steps)):
-        var step = plan.steps[step_idx]
+        var step = plan.steps[step_idx].copy()
         if step.isa[PairwiseStep]():
-            var ps = step.unsafe_get[PairwiseStep]()
+            var ps = step.unsafe_get[PairwiseStep]().copy()
             pairs.append(
                 Python.tuple(
                     PythonObject(ps.lhs_idx), PythonObject(ps.rhs_idx)
                 )
             )
         else:
-            var us = step.unsafe_get[UnaryStep]()
+            var us = step.unsafe_get[UnaryStep]().copy()
             pairs.append(Python.tuple(PythonObject(us.operand_idx)))
     return pairs
