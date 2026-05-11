@@ -57,6 +57,7 @@ import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 # Set the libpython link before `moeinsum` imports `_native` and triggers
 # the mohaus editable rebuild. uv-managed interpreters live outside the
@@ -201,7 +202,7 @@ def _compare_callable(
   if engine == "opt_einsum":
     import opt_einsum  # noqa: PLC0415
 
-    contract = getattr(opt_einsum, "contract")
+    contract = cast("Callable[..., object]", opt_einsum.contract)
     if optimize == "naive":
       return lambda: contract(eq, *operands, optimize=False)
     if optimize == "greedy":
