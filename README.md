@@ -6,11 +6,23 @@ An einsum implementation in Mojo with a backend-pluggable architecture, opt_eins
 import numpy as np
 import moeinsum
 
-a = np.random.randn(3, 4)
-b = np.random.randn(4, 5)
-c = moeinsum.einsum("ij,jk->ik", a, b)
-assert np.allclose(c, a @ b)
+# Bellman matrix chain. Naive left-to-right pairs `(AB)C` and pays
+# ~2e7 FLOPs. `auto` picks `A(BC)` and pays ~2e5 — 100x cheaper.
+A = np.random.randn(100, 1)
+B = np.random.randn(1, 100_000)
+C = np.random.randn(100_000, 1)
+
+moeinsum.einsum_path("ij,jk,kl->il", A.shape, B.shape, C.shape, optimize="auto")
+# → [(1, 2), (0, 1)]    ← (BC) first, then A·(BC)
+
+out = moeinsum.einsum("ij,jk,kl->il", A, B, C)            # default optimize="auto"
+# → shape (100, 1), agrees with np.einsum within 1e-10
 ```
+
+Pass tensors from any DLPack-capable framework — `numpy`, `torch`,
+`jax`, `mlx`, `cupy`, `tensorflow`. The return type mirrors the first
+operand's framework (torch in → torch out), or use `return_type="numpy"`
+to force.
 
 ## What's in v0.1
 
@@ -21,7 +33,7 @@ assert np.allclose(c, a @ b)
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `moeinsum-bench` script (installed by `pip install -e .`), JSON output.
-- **Tests**: 284 numpy-parity / parser / path / branch / explicit-path / cache / interop / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
+- **Tests**: 289 numpy-parity / parser / path / branch / explicit-path / cache / interop / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
 
 ## Docs
 
