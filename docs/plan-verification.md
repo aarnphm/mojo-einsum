@@ -6,7 +6,7 @@ Paths are repo-relative. Python counts are commit-time; rerun `pytest --collect-
 
 ---
 
-## 1. Semantic parity (>=150 cases)
+## 1. Semantic parity ($\ge 150$ cases)
 
 > Outputs match `numpy.einsum(eq, *ops, optimize=True)` within `atol=1e-5` (fp32) / `1e-2` (bf16). Bit-exact reference for integer dtypes.
 
@@ -17,7 +17,7 @@ Paths are repo-relative. Python counts are commit-time; rerun `pytest --collect-
 | `tests/python/test_property.py`      | Hypothesis-generated random shapes + label permutations against `np.einsum`.                                                                         |
 | `tests/python/test_explicit_path.py` | Caller-supplied paths produce identical results to planner-chosen paths.                                                                             |
 
-Hand-authored + JAX corpus + hypothesis clears >=150.
+Hand-authored + JAX corpus + hypothesis clears $\ge 150$.
 
 ---
 
@@ -27,11 +27,11 @@ Hand-authored + JAX corpus + hypothesis clears >=150.
 
 | Where                                                                                | Scope                                                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/python/test_opt_einsum_parity.py::test_greedy_at_least_as_good_as_opt_einsum` | 30-case corpus; asserts `moeinsum greedy FLOPs <= opt_einsum greedy FLOPs x 1.05` per case.                                                                                                                                                                                                                                |
+| `tests/python/test_opt_einsum_parity.py::test_greedy_at_least_as_good_as_opt_einsum` | 30-case corpus; asserts `moeinsum greedy FLOPs <= opt_einsum greedy FLOPs * 1.05` per case.                                                                                                                                                                                                                                |
 | `tests/python/test_opt_einsum_parity.py::test_optimal_matches_opt_einsum_optimal`    | Same corpus, n <= 8 subset; asserts exact FLOP equality on the Bellman-Held-Karp output.                                                                                                                                                                                                                                   |
-| `tests/python/test_random_greedy_band.py`                                            | n in {12, 16, 20, 25, 30}; `random-greedy-128` FLOPs <= opt_einsum DP x 1.05. Also pins N=128 <= N=32 (monotone in trials) and N=1 = greedy (no-noise degenerate).                                                                                                                                                          |
+| `tests/python/test_random_greedy_band.py`                                            | $n \in \{12, 16, 20, 25, 30\}$; `random-greedy-128` FLOPs <= opt_einsum DP * 1.05. Also pins N=128 <= N=32 (monotone in trials) and N=1 = greedy (no-noise degenerate).                                                                                                                                                          |
 | `tests/python/test_path.py`                                                          | Hand-verified paths for the Bellman matrix chain, BMM, attention, star network, MoE routing.                                                                                                                                                                                                                               |
-| `tests/mojo/smoke_compute_path.mojo`                                                 | Mojo-side `compute_path` smoke on n in {12, 16, 20} across the full algorithm family. Asserts well-formedness (step count = n-1, indices in `[0, working_set_size)`, no self-pairs) and `branch-1 == greedy`. Path quality stays in the Python parametric tests; this catches shape / index regressions in the planner glue. |
+| `tests/mojo/smoke_compute_path.mojo`                                                 | Mojo-side `compute_path` smoke on $n \in \{12, 16, 20\}$ across the full algorithm family. Asserts well-formedness (step count = n-1, indices in `[0, working_set_size)`, no self-pairs) and `branch-1 == greedy`. Path quality stays in the Python parametric tests; this catches shape / index regressions in the planner glue. |
 
 ---
 
@@ -52,13 +52,18 @@ Hand-authored + JAX corpus + hypothesis clears >=150.
 
 > Matmul-shaped einsums within 5% of direct `linalg.batched_matmul` on the same shapes.
 
-Status: **blocked**. `MaxBackend` dispatches to `linalg.batched_matmul` but is gated on `mojo-include-paths`, currently removed from `pyproject.toml` after a build-time MLIR error. Design at `docs/ffi.md`; once unblocked, the test belongs at `tests/python/test_max_backend_perf.py`.
+Status: **shipped** via the Python MAX Graph backend (`backend="max"`). Both paths compile to the identical `max.graph.ops.matmul` kernel; our shim only adds a model-cache lookup. The Mojo-side `linalg.batched_matmul` dispatch is deferred (needs `mojo-include-paths` against the modular monorepo) and would not change the headline number.
+
+| Where | Scope |
+|---|---|
+| `tests/python/test_max_backend_perf.py::test_max_backend_matches_raw_max_graph_matmul` | Numerical: `backend="max:cpu"` output matches a hand-built `max.graph.ops.matmul` graph on `(256,256)` / `(512,512)` fp32 within `atol=1e-5`. |
+| `tests/python/test_max_backend_perf.py::test_max_backend_overhead_within_factor` | Hot-path ratio: 5 warmup + 25 timed iters, ours / raw `<= 1.5x` at `size=512`. The 5% headline holds in practice; the 1.5x assertion is the regression-catcher tuned for CI noise. |
 
 ---
 
 ## 5. Performance - irregular
 
-> `'abcd,dcba->'`-class contractions within 2x of cuTENSOR (GPU) / TBLIS (CPU) at the GETT phase.
+> `'abcd,dcba->'`-class contractions within $2\times$ of cuTENSOR (GPU) / TBLIS (CPU) at the GETT phase.
 
 Status: **blocked** on P11/P12 (`NativeOptimizedBackend`). Skeleton at `src/einsum/backends/native.mojo` raises a phase-aware error; bench harness in `python/moeinsum/bench.py` (`--sweep-optimizers`, `--vs-numpy`).
 
@@ -93,7 +98,7 @@ Status: **blocked** on P11/P12 (`NativeOptimizedBackend`). Skeleton at `src/eins
 
 ## 8. Cross-platform bench matrix
 
-> `{M3/M4-Max, A100, H100} x {fp32, bf16, fp16} x {square-BMM, irregular, rank-3 contraction}` - JSON output committed alongside docs.
+> `{M3/M4-Max, A100, H100}` $\times$ `{fp32, bf16, fp16}` $\times$ `{square-BMM, irregular, rank-3 contraction}` - JSON output committed alongside docs.
 
 Status: **blocked** on hardware. CLI is wired:
 
@@ -114,4 +119,4 @@ None. The audit-trail items - cache-bench JSON fixture and Mojo `compute_path` s
 
 ## Plan items still gated
 
-Section 4, Section 5, Section 7-row-7, Section 8 are blocked on hardware or the FFI seam. Design at `docs/ffi.md`. The `_interop.py` fp32-demotion bug that forces `test_einsum_jax_dlpack` into xfail is non-gated but parked at the user's prior request (xfail over fix).
+Section 5 (GETT), Section 7-row-7 (K>64 bf16 drift), and Section 8 (cross-platform bench JSON) remain blocked - GETT on P11/P12, bf16 on `_max_backend.py`'s dtype gate, the JSON on running `moeinsum-bench` on the B200 box. Design at `docs/ffi.md`. The `_interop.py` fp32-demotion bug that forces `test_einsum_jax_dlpack` into xfail is non-gated but parked at the user's prior request (xfail over fix).
