@@ -181,16 +181,37 @@ def test_ellipsis_with_mismatched_implicit_rank() -> None:
 
 
 def test_broadcast_against_singleton() -> None:
-  """A singleton dim on one operand against a larger dim on the same
-  label must broadcast cleanly - this is the `cij,cjk->cik` shape with
-  cij having c=1."""
+  """Strict per-label size matching: `(1, 3, 4) cij` vs `(5, 4, 6) cjk` is
+  rejected on label `c`. Numpy.einsum broadcasts this cleanly to `(5, 3, 6)`;
+  moeinsum chose strict equality to keep the planner's cost model honest -
+  broadcast hides the real reduction extent, so the FLOP estimate would lie.
+  See `test_broadcast_against_singleton_is_known_parity_gap` for the
+  xfail-pinned divergence and the path to fix it."""
   rng = np.random.default_rng(0)
   a = rng.standard_normal((1, 3, 4))
   b = rng.standard_normal((5, 4, 6))
-  # Numpy einsum errors here; we accept the strict semantics. The real
-  # broadcast convention is via explicit ellipsis, exercised above.
-  with pytest.raises(Exception):  # noqa: B017
+  with pytest.raises(Exception, match="size mismatch"):
     moeinsum.einsum("cij,cjk->cik", a, b)
+
+
+@pytest.mark.xfail(
+  reason="P5/P6 follow-up: numpy.einsum broadcasts size-1 axes per-label; "
+  "moeinsum rejects via the strict size check in reference.mojo:72. Fix is "
+  "(a) accept dim=1 vs dim=N as compatible in the validator and resolve to "
+  "max(dim, 1); (b) emit broadcast ops in the MAX-backend graph lowering. "
+  "Until then, callers must np.broadcast_to() before calling einsum.",
+  strict=True,
+)
+def test_broadcast_against_singleton_is_known_parity_gap() -> None:
+  """Pin the parity gap so the fix has an explicit failing test to flip
+  to passing. When this starts passing, drop the xfail and update
+  `test_broadcast_against_singleton` to assert the broadcasted result."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((1, 3, 4))
+  b = rng.standard_normal((5, 4, 6))
+  expected = np.einsum("cij,cjk->cik", a, b)
+  actual = moeinsum.einsum("cij,cjk->cik", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-9)
 
 
 def test_integer_bit_exact_reduction_large_k() -> None:
@@ -219,7 +240,7 @@ def test_accum_dtype_unknown_raises() -> None:
 
 
 def test_accum_dtype_known_dtypes_accepted() -> None:
-  """fp32, fp64, bf16 (if available), fp16 must all be accepted  - 
+  """fp32, fp64, bf16 (if available), fp16 must all be accepted  -
   even though the reference backend ignores the value today, the API
   surface validates."""
   a = np.eye(3)
