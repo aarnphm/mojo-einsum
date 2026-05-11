@@ -36,9 +36,7 @@ def check_implicit_output() raises:
     if eq.has_explicit_output:
         raise Error(String("implicit: expected has_explicit_output=False"))
     if len(eq.output) != 2:
-        raise Error(
-            String("implicit: expected 2 output labels, got ", len(eq.output))
-        )
+        raise Error(String("implicit: expected 2 output labels, got ", len(eq.output)))
     print("check_implicit_output: OK")
 
 
@@ -69,9 +67,7 @@ def check_naive_plan() raises:
     var eq = parse(String("ij,jk,kl->il"))
     var plan = build_naive_plan(eq)
     if len(plan.steps) != 2:
-        raise Error(
-            String("naive plan: expected 2 steps, got ", len(plan.steps))
-        )
+        raise Error(String("naive plan: expected 2 steps, got ", len(plan.steps)))
     print("check_naive_plan: OK")
 
 

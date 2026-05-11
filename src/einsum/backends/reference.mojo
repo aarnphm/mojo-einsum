@@ -142,17 +142,13 @@ def execute_reference(
         # Compute product over operands.
         var prod: Float64 = 1.0
         for op_idx in range(eq.n_operands()):
-            var off = _flat_offset(
-                label_idx, eq.inputs[op_idx], operand_strides[op_idx]
-            )
+            var off = _flat_offset(label_idx, eq.inputs[op_idx], operand_strides[op_idx])
             prod *= operand_data[op_idx][off]
 
         # Accumulate into output.
         var out_off: Int = 0
         for axis in range(out_rank):
-            out_off += (
-                label_idx[eq.output[axis]] * output_strides[axis]
-            )
+            out_off += label_idx[eq.output[axis]] * output_strides[axis]
         output_data[out_off] += prod
 
         # Increment label_idx as a mixed-radix counter. Carries through

@@ -30,6 +30,7 @@ struct ContractionStep(Copyable, Movable):
     into the working set *at the time of this step*. The resulting
     intermediate is appended at the end of the working set; the two
     operands are removed."""
+
     var lhs_idx: Int
     var rhs_idx: Int
 
@@ -43,6 +44,7 @@ comptime PATH_EXPLICIT: Int = 3
 # ─────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────
+
 
 def _label_set_union(a: List[Int], b: List[Int]) -> List[Int]:
     """Union preserving `a`'s order, then appending `b`'s unique labels."""
@@ -116,9 +118,7 @@ def _step_output_labels(
     return out^
 
 
-def _tensor_size(
-    labels: List[Int], label_sizes: List[Int]
-) -> Int:
+def _tensor_size(labels: List[Int], label_sizes: List[Int]) -> Int:
     """Product of label sizes — count of elements in this tensor."""
     var s: Int = 1
     for i in range(len(labels)):
@@ -166,6 +166,7 @@ def _flop_cost(
 # Greedy path
 # ─────────────────────────────────────────────────────────────────────
 
+
 def greedy_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
@@ -198,15 +199,9 @@ def greedy_path(
                 for k in range(len(working)):
                     if k != i and k != j:
                         others.append(working[k].copy())
-                var out = _step_output_labels(
-                    working[i], working[j], others, eq.output
-                )
-                var score = _reduced_size_cost(
-                    working[i], working[j], out, label_sizes
-                )
-                var flops = _flop_cost(
-                    working[i], working[j], out, label_sizes
-                )
+                var out = _step_output_labels(working[i], working[j], others, eq.output)
+                var score = _reduced_size_cost(working[i], working[j], out, label_sizes)
+                var flops = _flop_cost(working[i], working[j], out, label_sizes)
                 var better = False
                 if score > best_score:
                     better = True
@@ -234,6 +229,7 @@ def greedy_path(
 # ─────────────────────────────────────────────────────────────────────
 # Optimal path (DP over subsets, Bellman-Held-Karp)
 # ─────────────────────────────────────────────────────────────────────
+
 
 def _subset_labels(
     subset_mask: Int,
@@ -291,11 +287,7 @@ def optimal_path(
     """
     var n = eq.n_operands()
     if n > 16:
-        raise Error(
-            String(
-                "optimal_path: ", n, " operands exceeds DP limit of 16"
-            )
-        )
+        raise Error(String("optimal_path: ", n, " operands exceeds DP limit of 16"))
     if n < 2:
         return List[ContractionStep]()
 
@@ -308,9 +300,7 @@ def optimal_path(
     # surviving labels if S were contracted into a single tensor.
     var subset_labels = List[List[Int]]()
     for s in range(n_subsets):
-        var labels = _subset_labels(
-            s, n, operand_labels, operand_labels, eq.output
-        )
+        var labels = _subset_labels(s, n, operand_labels, operand_labels, eq.output)
         subset_labels.append(labels^)
 
     # f[S] = best cost to contract subset S to a single tensor.
@@ -359,9 +349,7 @@ def optimal_path(
     # in post-order (deepest leaves first). The output uses working-set
     # indices, so we need to translate the bit-set view to a linear one.
     var steps = List[ContractionStep]()
-    _emit_path_dfs(
-        n_subsets - 1, best_split_lhs, steps
-    )
+    _emit_path_dfs(n_subsets - 1, best_split_lhs, steps)
 
     # `steps` currently records (subset_mask_lhs, subset_mask_rhs) — we
     # need (working_set_idx_lhs, working_set_idx_rhs). Translate.
@@ -381,9 +369,7 @@ def optimal_path(
             elif working[i] == u:
                 ri = i
         if li < 0 or ri < 0:
-            raise Error(
-                String("optimal_path: working-set translation failed")
-            )
+            raise Error(String("optimal_path: working-set translation failed"))
         if li > ri:
             var tmp = li
             li = ri
@@ -420,6 +406,7 @@ def _emit_path_dfs(
 # Auto dispatch
 # ─────────────────────────────────────────────────────────────────────
 
+
 def auto_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
@@ -439,6 +426,7 @@ def auto_path(
 # ─────────────────────────────────────────────────────────────────────
 # Public entrypoint
 # ─────────────────────────────────────────────────────────────────────
+
 
 def compute_path(
     eq: EinsumEquation,

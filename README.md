@@ -1,14 +1,14 @@
-# mojo-einsum
+# moeinsum
 
 An einsum implementation in Mojo with a backend-pluggable architecture, opt_einsum-equivalent path optimizer, and a numpy-compatible Python API.
 
 ```python
 import numpy as np
-import mojo_einsum
+import moeinsum
 
 a = np.random.randn(3, 4)
 b = np.random.randn(4, 5)
-c = mojo_einsum.einsum("ij,jk->ik", a, b)
+c = moeinsum.einsum("ij,jk->ik", a, b)
 assert np.allclose(c, a @ b)
 ```
 
@@ -20,7 +20,7 @@ assert np.allclose(c, a @ b)
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy ndarrays. Per-signature LRU cache.
-- **Bench CLI**: `python -m mojo_einsum.bench` with JSON output.
+- **Bench CLI**: `python -m moeinsum.bench` with JSON output.
 
 ## Docs
 
@@ -35,7 +35,7 @@ This project uses [mohaus](https://github.com/aarnphm/mohaus)
 
 ```bash
 uv pip install -e .
-python -c "import mojo_einsum; import numpy as np; print(mojo_einsum.einsum('ij,jk->ik', np.eye(3), np.eye(3)))"
+python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik', np.eye(3), np.eye(3)))"
 ```
 
 ## Roadmap
@@ -47,7 +47,7 @@ python -c "import mojo_einsum; import numpy as np; print(mojo_einsum.einsum('ij,
 | P2    | partial | Parser polish, advanced grammar edge cases                                         |
 | P3    | ✅      | Unary kernels (transpose / diagonal / sum / trace)                                 |
 | P4    | ✅      | Path optimizer (greedy / optimal-DP / auto). Random-greedy / branch in polish pass |
-| P5    | ⏳      | `MaxBackend` dispatching to `linalg.batched_matmul`                         |
+| P5    | ⏳      | `MaxBackend` dispatching to `linalg.batched_matmul`                                |
 | P6    | ⏳      | Multi-operand orchestration + ContractionContext arena                             |
 | P7    | ✅      | JIT plan cache (Python-side LRU)                                                   |
 | P8    | ⏳      | DLPack zero-copy (numpy / torch / jax / mlx interop)                               |

@@ -9,7 +9,7 @@ requires = [
 build-backend = "mohaus.backend"
 
 [project]
-name = "mojo-einsum"
+name = "moeinsum"
 version = "0.1.0"
 description = "einsum impolementation in Mojo"
 readme = "README.md"
@@ -33,7 +33,7 @@ opt-einsum-compat = ["opt_einsum>=3.3"]
 dev = ["pytest>=8", "pytest-xdist>=3", "hypothesis>=6", "ruff>=0.5", "ty"]
 
 [tool.mohaus]
-module-name = "mojo_einsum._native"
+module-name = "moeinsum._native"
 strip = true
 generate-stub = true
 mojo-flags = []

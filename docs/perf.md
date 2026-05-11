@@ -4,7 +4,7 @@ This page is the user-facing companion to `derivations.md`. The math there expla
 
 ## When to choose which backend
 
-mojo-einsum ships four backends; the default `max` is right for almost everything. The exceptions are worth knowing.
+moeinsum ships four backends; the default `max` is right for almost everything. The exceptions are worth knowing.
 
 **`reference`** — naive nested loop, fp64 internally. Use it for:
 
@@ -54,7 +54,7 @@ For n > 16: `greedy` is the only option in v0.1. If you have a real tensor-netwo
 ```python
 import cotengra as ctg
 path = ctg.array_contract_path(eq, *shapes, optimize=ctg.HyperOptimizer())
-result = mojo_einsum.einsum(eq, *arrays, optimize=path)
+result = moeinsum.einsum(eq, *arrays, optimize=path)
 ```
 
 (The explicit-path API lands with P4 polish; for v0.1 you can call `einsum_path` yourself and pass the result.)
@@ -76,14 +76,14 @@ The `derivations.md` §4 derivation shows the √K error growth concretely. The 
 
 `linalg.batched_matmul` parallelizes the K-loop across threads / blocks; the order of summation is non-deterministic. For most numerical workloads this is fine — the error is at the unit roundoff level. For some (regression testing, audit trails, reproducibility-required research) it matters.
 
-mojo-einsum exposes a `deterministic=True` flag that forces serial K-summation. Costs about 30% throughput on CPU, can be 5–10× slower on GPU (you serialize the BMM). Use only when needed.
+moeinsum exposes a `deterministic=True` flag that forces serial K-summation. Costs about 30% throughput on CPU, can be 5–10× slower on GPU (you serialize the BMM). Use only when needed.
 
 ## Profiling
 
-Before tuning anything, profile. A `mojo-einsum-bench` CLI ships in P13 and emits per-step timing as JSON:
+Before tuning anything, profile. A `moeinsum-bench` CLI ships in P13 and emits per-step timing as JSON:
 
 ```bash
-mojo-einsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max --target cpu
+moeinsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max --target cpu
 ```
 
 ```json
@@ -109,7 +109,7 @@ The per-step `gflops` tells you whether the matmul kernel is hot. If it's <50% o
 
 **NVIDIA Hopper (H100, H200)**: WGMMA + TMA are the inner kernel. The `linalg.batched_matmul` GPU path uses `warp_specialize_gemm_with_multicasting`. Peak fp16/bf16 throughput requires `M ≥ 64`, `N ≥ 128`, `K` a multiple of 16. Smaller contractions hit the small-matrix slow path. If your einsum lowers to such a shape, consider whether the path optimizer is choosing a suboptimal intermediate — sometimes a different `optimize=` setting produces a better-shaped intermediate.
 
-**NVIDIA Blackwell (B100, B200)**: TCGEN05 + UMMA. Similar story to Hopper but with stricter alignment requirements. mojo-einsum's `max` backend handles this transparently when `target="gpu"`.
+**NVIDIA Blackwell (B100, B200)**: TCGEN05 + UMMA. Similar story to Hopper but with stricter alignment requirements. moeinsum's `max` backend handles this transparently when `target="gpu"`.
 
 **AMD MI300X**: MFMA tensor cores via Composable Kernel. Peak fp16 requires `M, N` multiples of 32 (vs 64 on Hopper). The matmul dispatcher knows this. For odd shapes, performance suffers more than on NVIDIA — AMD's mixed-shape kernels are less mature.
 

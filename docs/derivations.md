@@ -1,6 +1,6 @@
 # Derivations
 
-Math and algorithm derivations for mojo-einsum. Builds on the vocabulary established in `notation.md` — the B/K/M/N taxonomy, the contraction-path concept, the ellipsis broadcasting rule. This document goes one level deeper: why the algorithms work, what their cost models actually measure, and where they're sharp.
+Math and algorithm derivations for moeinsum. Builds on the vocabulary established in `notation.md` — the B/K/M/N taxonomy, the contraction-path concept, the ellipsis broadcasting rule. This document goes one level deeper: why the algorithms work, what their cost models actually measure, and where they're sharp.
 
 ## 1. The BMM lowering
 
@@ -39,7 +39,7 @@ Good implementations dispatch to `linalg.batched_matmul`'s `transpose_a` / `tran
 1. Materialize the permute into a fresh buffer (TTGT — Transpose-Transpose-GEMM-Transpose).
 2. Fuse the permute into the GEMM's tile-loading code (GETT — see §3).
 
-The mojo-einsum `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` will do (2). The plan IR (`plan.mojo`) records the required permutations as `out_permutation` so backends can decide.
+The moeinsum `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` will do (2). The plan IR (`plan.mojo`) records the required permutations as `out_permutation` so backends can decide.
 
 ### What about the inner BMM kernel?
 
@@ -78,13 +78,13 @@ with base case $f(\{i\}) = 0$ for singletons. The answer is $f(\{1, \ldots, n\})
 
 Complexity: O($3^n$) time (each pair $(T, S \setminus T)$ visited once, total pairs is $3^n / 2$), O($2^n$) memory for the table. At n=16 that's 43M states, ~5 seconds on a modern CPU — usable for compile-time evaluation; impractical at n=20+.
 
-The cost function we plug in matters. Pure FLOPs gives compute-optimal paths; pure memory gives memory-optimal paths; opt_einsum's default mixes them via the reduced_size heuristic applied to each step's cost. mojo-einsum's `path.mojo` ships FLOPs as the DP cost — fully compute-optimal — and uses reduced_size only inside the greedy.
+The cost function we plug in matters. Pure FLOPs gives compute-optimal paths; pure memory gives memory-optimal paths; opt_einsum's default mixes them via the reduced_size heuristic applied to each step's cost. moeinsum's `path.mojo` ships FLOPs as the DP cost — fully compute-optimal — and uses reduced_size only inside the greedy.
 
 ### Why use reduced_size as the DP cost too?
 
 You can — opt_einsum offers both. The argument for FLOPs in the DP: FLOPs directly determine compute time on the BMM-lowered path (cubical in the inner loop bound), and memory cost is bounded by FLOPs to within a factor of $|K|$ where $K$ is the contracted dim. The argument for reduced_size: peak memory is a hard constraint (OOM), and on GPU peak intermediates often dominate runtime through eviction.
 
-For ML-shaped einsums (≤ 8 operands, each ≤ 6 dims) the two cost models almost always agree. They diverge for tensor-network contractions (n > 20) where slicing — accepting more FLOPs to fit memory — becomes important. mojo-einsum doesn't ship cotengra-style slicing in v0.1; n > 30 contractions should use `cotengra` directly via Python and pass the explicit path.
+For ML-shaped einsums (≤ 8 operands, each ≤ 6 dims) the two cost models almost always agree. They diverge for tensor-network contractions (n > 20) where slicing — accepting more FLOPs to fit memory — becomes important. moeinsum doesn't ship cotengra-style slicing in v0.1; n > 30 contractions should use `cotengra` directly via Python and pass the explicit path.
 
 ### Cardoso et al. 2024
 
@@ -92,11 +92,11 @@ The Cardoso et al. paper _Optimizing Tensor Contraction Paths: A Greedy Algorith
 
 $$\text{cost}_{\text{Cardoso}}(A, B) = \alpha \cdot \text{flops}(A, B) + (1 - \alpha) \cdot \text{reduced\_size}(A, B)$$
 
-with $\alpha$ tuned per-problem. mojo-einsum's `path.mojo` has FLOP and memory cost as separate functions; wiring Cardoso's mixed cost in is a one-line edit. Future work.
+with $\alpha$ tuned per-problem. moeinsum's `path.mojo` has FLOP and memory cost as separate functions; wiring Cardoso's mixed cost in is a one-line edit. Future work.
 
 ### The branch family
 
-opt_einsum also ships `branch-all`, `branch-2`, `branch-1` — best-first searches over the contraction tree, pruned by current best total cost. These sit between DP optimal and greedy on the time/quality curve. For n=5–7 they're often the sweet spot. mojo-einsum's v0.1 omits them; the implementation is mechanical and lands when a real workload demands it.
+opt_einsum also ships `branch-all`, `branch-2`, `branch-1` — best-first searches over the contraction tree, pruned by current best total cost. These sit between DP optimal and greedy on the time/quality curve. For n=5–7 they're often the sweet spot. moeinsum's v0.1 omits them; the implementation is mechanical and lands when a real workload demands it.
 
 ## 3. GETT: GEMM-like Tensor-Tensor multiplication
 
@@ -142,7 +142,7 @@ for each M-tile, K-tile, N-tile:
 
 Matthews's TBLIS Table III (Haswell, dgemm): TBLIS within 5–10% of theoretical peak on most synthetic contractions, beating TTGT by 1.3–2.5× when the permutations would have been expensive. Springer & Bientinesi report similar numbers for GETT on Skylake.
 
-On GPU, cuTENSOR ships `CUTENSOR_ALGO_GETT` as one of its dispatch options. Hopper's WGMMA + TMA make GETT natural — TMA asynchronously fetches tile-shaped regions with arbitrary multi-dim strides directly into shared memory, and WGMMA consumes from shared without caring about the source layout. This is essentially GETT's "fuse the permute into packing" idea, implemented at the hardware level. mojo-einsum's `NativeOptimizedBackend` (P12) follows this pattern.
+On GPU, cuTENSOR ships `CUTENSOR_ALGO_GETT` as one of its dispatch options. Hopper's WGMMA + TMA make GETT natural — TMA asynchronously fetches tile-shaped regions with arbitrary multi-dim strides directly into shared memory, and WGMMA consumes from shared without caring about the source layout. This is essentially GETT's "fuse the permute into packing" idea, implemented at the hardware level. moeinsum's `NativeOptimizedBackend` (P12) follows this pattern.
 
 ### When GETT loses
 
@@ -172,11 +172,11 @@ fp32 accumulation with bf16 inputs: $u \sqrt{K} \approx 1.2 \times 10^{-7} \cdot
 
 For any einsum with $K > 64$ and low-precision inputs, use a higher-precision accumulator. cuBLAS bf16 GEMMs default to `CUBLAS_COMPUTE_32F` accumulation; cuTENSOR bf16 contractions default to `CUTENSOR_COMPUTE_32F`. The only place bf16-accumulating bf16 is sane is when $K$ is statically known to be small (e.g. 16 in some attention heads).
 
-mojo-einsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16 or bf16). The `MaxBackend` forwards this to `linalg.batched_matmul`'s compute-type parameter; the reference backend ignores it (always fp64 internally for v0.1) and is the source of truth for numerical regression testing.
+moeinsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16 or bf16). The `MaxBackend` forwards this to `linalg.batched_matmul`'s compute-type parameter; the reference backend ignores it (always fp64 internally for v0.1) and is the source of truth for numerical regression testing.
 
 ### Pairwise vs serial summation
 
-A second-order effect: even at full precision, serial accumulation of $K$ terms has worst-case error $O(K \cdot u)$. Pairwise summation (recurse-and-sum) reduces this to $O(\log K \cdot u)$ — much better for large $K$. cuBLAS and modern GEMMs do pairwise summation inside the tile; a naive einsum kernel might not. The reference backend in mojo-einsum is serial-accumulating; the optimized backends (P11+) should pairwise-accumulate inside the inner loop. This isn't a correctness issue for the reference (fp64 has enough mantissa to absorb the worst case at any practical $K$) but is a quality-of-implementation knob worth surfacing.
+A second-order effect: even at full precision, serial accumulation of $K$ terms has worst-case error $O(K \cdot u)$. Pairwise summation (recurse-and-sum) reduces this to $O(\log K \cdot u)$ — much better for large $K$. cuBLAS and modern GEMMs do pairwise summation inside the tile; a naive einsum kernel might not. The reference backend in moeinsum is serial-accumulating; the optimized backends (P11+) should pairwise-accumulate inside the inner loop. This isn't a correctness issue for the reference (fp64 has enough mantissa to absorb the worst case at any practical $K$) but is a quality-of-implementation knob worth surfacing.
 
 ## 5. The diagonal stride trick
 
@@ -195,7 +195,7 @@ For higher rank — `'iji->ij'` extracts the i=k slice of a 3D tensor — the sa
 
 In general, for a diagonal across k repeated occurrences of one label at axes $a_1, \ldots, a_k$, the diagonal-axis stride is $\sigma_{a_1} + \sigma_{a_2} + \cdots + \sigma_{a_k}$. The other axes are unchanged.
 
-This generalization is what mojo-einsum's `unary.mojo` (Phase 3) implements: take the per-axis strides from the input's `Layout`, sum the strides of repeated labels into a new axis, build a new `Layout` with the result. Zero copy in all cases where the input is contiguous-enough to be viewed.
+This generalization is what moeinsum's `unary.mojo` (Phase 3) implements: take the per-axis strides from the input's `Layout`, sum the strides of repeated labels into a new axis, build a new `Layout` with the result. Zero copy in all cases where the input is contiguous-enough to be viewed.
 
 The historical implementation bug here (PyTorch issue #21760 et al.) was forgetting to handle non-contiguous inputs. `A[::2, ::2]` is a 2× downsampled view — its row stride is `2n`, column stride is 2, so the diagonal stride should be `2n + 2`, not `n + 1`. The contiguous-only formula gives the wrong answer.
 
@@ -220,8 +220,8 @@ else:
     operand = _dot_general(lhs, rhs, dimension_numbers, precision)
 ```
 
-mojo-einsum's `classify_pair` currently always uses the lhs-first order, which means about half of contractions get a final permute they could have avoided. Improving this is a one-line conditional in the plan builder; future work for the perf phase.
+moeinsum's `classify_pair` currently always uses the lhs-first order, which means about half of contractions get a final permute they could have avoided. Improving this is a one-line conditional in the plan builder; future work for the perf phase.
 
 ---
 
-These six derivations cover the load-bearing math of mojo-einsum. The notation primer (`notation.md`) establishes the vocabulary; this document establishes the algorithms; `perf.md` covers the empirics. The plan, the kernels, and the backends are then implementation of these ideas.
+These six derivations cover the load-bearing math of moeinsum. The notation primer (`notation.md`) establishes the vocabulary; this document establishes the algorithms; `perf.md` covers the empirics. The plan, the kernels, and the backends are then implementation of these ideas.

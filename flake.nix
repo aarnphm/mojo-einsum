@@ -1,5 +1,5 @@
 {
-  description = "mojo-einsum: mixed Python and Mojo package scaffolded by mohaus";
+  description = "moeinsum: mixed Python and Mojo package scaffolded by mohaus";
 
   inputs = {
     git-hooks-nix.url = "github:cachix/git-hooks.nix";
@@ -46,7 +46,7 @@
 
     mojoFormatHook = pkgs:
       pkgs.writeShellApplication {
-        name = "mojo_einsum-mojo-format-check";
+        name = "moeinsum-mojo-format-check";
         runtimeInputs = [
           pkgs.coreutils
           pkgs.diffutils
@@ -173,7 +173,7 @@
             mojo-format = {
               enable = true;
               name = "mojo format";
-              entry = "${mojoFormatHook pkgs}/bin/mojo_einsum-mojo-format-check";
+              entry = "${mojoFormatHook pkgs}/bin/moeinsum-mojo-format-check";
               files = "\\.mojo$";
             };
 
@@ -244,24 +244,24 @@
         default = mohausApp;
         mohaus = mohausApp;
 
-        develop = mkCommandApp system pkgs "mojo_einsum-develop" ''
+        develop = mkCommandApp system pkgs "moeinsum-develop" ''
           mohaus develop "$@"
         '';
 
-        build = mkCommandApp system pkgs "mojo_einsum-build" ''
+        build = mkCommandApp system pkgs "moeinsum-build" ''
           mohaus build "$@"
         '';
 
-        sdist = mkCommandApp system pkgs "mojo_einsum-sdist" ''
+        sdist = mkCommandApp system pkgs "moeinsum-sdist" ''
           mohaus sdist "$@"
         '';
 
-        fmt = mkCommandApp system pkgs "mojo_einsum-fmt" ''
+        fmt = mkCommandApp system pkgs "moeinsum-fmt" ''
           ruff format python
           alejandra flake.nix
         '';
 
-        check = mkCommandApp system pkgs "mojo_einsum-check" ''
+        check = mkCommandApp system pkgs "moeinsum-check" ''
           ruff format --check python
           ruff check python
           uvx ty check

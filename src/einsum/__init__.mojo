@@ -1,4 +1,4 @@
-"""mojo-einsum core: parser, plan IR, and unary kernels.
+"""moeinsum core: parser, plan IR, and unary kernels.
 
 Sub-packages:
   - `parse`: equation parser, `EinsumEquation` IR.

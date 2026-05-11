@@ -115,7 +115,7 @@ The `...` token stands for "any number of leading dimensions."
 
 `"...ij,jk->...ik"` is a batched matmul where the batch shape is whatever the inputs supply. For a 4-D `(B1, B2, M, K)` lhs and 2-D `(K, N)` rhs, the ellipsis expands to two labels representing `B1` and `B2`. The rhs has no ellipsis, so it broadcasts: it carries no batch dims and is reused for every `(B1, B2)` position.
 
-In mojo-einsum's parser, ellipsis is initially represented by a sentinel label (`-1`). A second pass—`expand_ellipsis(eq, operand_ranks)` — substitutes fresh label IDs once we know the operand ranks. This deferred expansion keeps the parser independent of operand shapes.
+In moeinsum's parser, ellipsis is initially represented by a sentinel label (`-1`). A second pass—`expand_ellipsis(eq, operand_ranks)` — substitutes fresh label IDs once we know the operand ranks. This deferred expansion keeps the parser independent of operand shapes.
 
 ## Attention as einsum
 
@@ -145,7 +145,7 @@ Two einsums and a softmax. The PyTorch source for the same block runs forty line
 
 ## IR
 
-mojo-einsum has a small IR to represent path optimization.
+moeinsum has a small IR to represent path optimization.
 
 When `parse("ij,jk->ik")` runs, it produces an `EinsumEquation`:
 

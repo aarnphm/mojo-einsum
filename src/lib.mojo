@@ -1,4 +1,4 @@
-"""Entrypoint for `mojo_einsum._native`.
+"""Entrypoint for `moeinsum._native`.
 
 Exposed callables (consumed by the Python wrapper):
   - `parse_equation(eq: str) -> dict`
@@ -7,6 +7,8 @@ Exposed callables (consumed by the Python wrapper):
         Reference backend: row-major flat lists in, row-major flat list out.
   - `einsum_path(eq, operand_shapes) -> list[tuple[int, ...]]`
         Path chosen by the naive (P1) plan builder.
+  - `einsum_compute_path(eq, operand_shapes, algorithm) -> list[tuple[int, int]]`
+        Path chosen by the named optimizer.
 """
 
 from std.os import abort
@@ -15,17 +17,17 @@ from std.python.bindings import PythonModuleBuilder
 from std.memory import UnsafePointer
 from std.memory.unsafe_pointer import alloc
 
-from einsum.parse import EinsumEquation, parse, expand_ellipsis, ELLIPSIS_LABEL
+from einsum.parse import parse, expand_ellipsis
 from einsum.plan import (
-    ContractionPlan,
-    PlanStep,
     UnaryStep,
     PairwiseStep,
     build_naive_plan,
 )
+from einsum.path import compute_path
 from einsum.backends.reference import (
     execute_reference,
     compute_output_shape,
+    _resolve_label_sizes,
 )
 
 
@@ -36,6 +38,7 @@ def PyInit__native() -> PythonObject:
         module.def_function[parse_equation_py]("parse_equation")
         module.def_function[einsum_reference_py]("einsum_reference")
         module.def_function[einsum_path_py]("einsum_path")
+        module.def_function[einsum_compute_path_py]("einsum_compute_path")
         return module.finalize()
     except e:
         abort(String("failed to create _native module: ", e))
@@ -44,6 +47,7 @@ def PyInit__native() -> PythonObject:
 # ─────────────────────────────────────────────────────────────────────
 # parse_equation — IR introspection
 # ─────────────────────────────────────────────────────────────────────
+
 
 def parse_equation_py(eq_obj: PythonObject) raises -> PythonObject:
     var eq_str = String(py=eq_obj)
@@ -79,6 +83,7 @@ def parse_equation_py(eq_obj: PythonObject) raises -> PythonObject:
 # ─────────────────────────────────────────────────────────────────────
 # einsum_reference — flat-list FFI for the reference backend
 # ─────────────────────────────────────────────────────────────────────
+
 
 def _pylist_shapes_to_mojo(
     shapes_obj: PythonObject,
@@ -207,10 +212,17 @@ def einsum_reference_py(
 # einsum_path — pair sequence introspection
 # ─────────────────────────────────────────────────────────────────────
 
+
 def einsum_path_py(
     eq_obj: PythonObject,
     operand_shapes_obj: PythonObject,
 ) raises -> PythonObject:
+    """Return the naive (left-to-right) pair sequence from build_naive_plan.
+
+    Each tuple is `(lhs_idx, rhs_idx)` for a pairwise step or `(idx,)`
+    for a unary step, where indices refer to the working-set position
+    at the time of that step.
+    """
     var eq_str = String(py=eq_obj)
     var eq = parse(eq_str)
 
@@ -227,12 +239,44 @@ def einsum_path_py(
         var step = plan.steps[step_idx].copy()
         if step.isa[PairwiseStep]():
             var ps = step.unsafe_get[PairwiseStep]().copy()
-            pairs.append(
-                Python.tuple(
-                    PythonObject(ps.lhs_idx), PythonObject(ps.rhs_idx)
-                )
-            )
+            pairs.append(Python.tuple(PythonObject(ps.lhs_idx), PythonObject(ps.rhs_idx)))
         else:
             var us = step.unsafe_get[UnaryStep]().copy()
             pairs.append(Python.tuple(PythonObject(us.operand_idx)))
+    return pairs
+
+
+def einsum_compute_path_py(
+    eq_obj: PythonObject,
+    operand_shapes_obj: PythonObject,
+    algorithm_obj: PythonObject,
+) raises -> PythonObject:
+    """Run `path.mojo`'s named algorithm and return its pair sequence.
+
+    `algorithm ∈ {"greedy", "optimal", "auto", "naive"}`. Output is a
+    list of `(lhs_idx, rhs_idx)` tuples — pairwise-only, no unary
+    singletons (single-operand contractions go through `einsum_path`
+    which uses `build_naive_plan`).
+    """
+    var eq_str = String(py=eq_obj)
+    var algorithm = String(py=algorithm_obj)
+    var eq = parse(eq_str)
+
+    var operand_shapes = _pylist_shapes_to_mojo(operand_shapes_obj)
+    var operand_ranks = List[Int]()
+    for i in range(len(operand_shapes)):
+        operand_ranks.append(len(operand_shapes[i]))
+    expand_ellipsis(eq, operand_ranks)
+
+    var label_sizes = _resolve_label_sizes(eq, operand_shapes)
+    var steps = compute_path(eq, label_sizes, algorithm)
+
+    var pairs = Python.evaluate("[]")
+    for k in range(len(steps)):
+        pairs.append(
+            Python.tuple(
+                PythonObject(steps[k].lhs_idx),
+                PythonObject(steps[k].rhs_idx),
+            )
+        )
     return pairs
