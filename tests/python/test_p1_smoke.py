@@ -11,9 +11,9 @@ import moeinsum
 import numpy as np
 import pytest
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Parser
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def _assert_parse_error(eq: str) -> None:
@@ -61,14 +61,14 @@ def test_parse_double_dot() -> None:
   _assert_parse_error("..ij,jk->ik")
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Reference backend — numpy parity
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 # Canonical curated cases. Each row: (eq, shapes). Operands are seeded
 # from np.random.default_rng(0).standard_normal for reproducibility.
 _CASES = [
-  # ── single-operand ──
+  # -- single-operand --
   ("ii->", [(4, 4)]),  # trace
   ("ii->i", [(4, 4)]),  # diagonal
   ("i->", [(7,)]),  # 1D sum
@@ -76,7 +76,7 @@ _CASES = [
   ("ij->ji", [(3, 5)]),  # transpose
   ("ijk->ikj", [(2, 3, 4)]),  # 3D transpose
   ("ijk->", [(2, 3, 4)]),  # 3D full sum
-  # ── two-operand ──
+  # -- two-operand --
   ("i,i->", [(5,), (5,)]),  # inner product
   ("i,j->ij", [(3,), (4,)]),  # outer product
   ("ij,j->i", [(3, 5), (5,)]),  # matvec
@@ -84,7 +84,7 @@ _CASES = [
   ("bij,bjk->bik", [(2, 3, 5), (2, 5, 4)]),  # batched matmul
   ("ij,ij->", [(3, 5), (3, 5)]),  # double contraction (Frobenius)
   ("ij,ji->", [(3, 5), (5, 3)]),  # trace of product
-  # ── multi-operand ──
+  # -- multi-operand --
   ("ij,jk,kl->il", [(2, 3), (3, 4), (4, 5)]),
   ("ij,jk,kl,lm->im", [(2, 3), (3, 4), (4, 5), (5, 6)]),
 ]
@@ -101,9 +101,9 @@ def test_numpy_parity(eq: str, shapes: list[tuple[int, ...]]) -> None:
   np.testing.assert_allclose(actual, expected, atol=1e-10, rtol=1e-10)
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # einsum_path
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_path_naive_left_to_right() -> None:
