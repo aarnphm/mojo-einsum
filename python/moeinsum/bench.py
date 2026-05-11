@@ -197,6 +197,8 @@ def _compare_callable(
   optimize: str,
 ) -> Callable[[], object]:
   if engine == "numpy":
+    if operands and operands[0].dtype.name == "bfloat16":
+      raise ImportError("numpy.einsum upgrades bf16 to fp32 silently; skipping to avoid a misleading measurement")
     return lambda: np.einsum(eq, *operands, optimize=True)
 
   if engine == "opt_einsum":
@@ -348,8 +350,12 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument(
     "--dtype",
     default="float64",
-    choices=["float32", "float64"],
-    help="Operand dtype",
+    choices=["float32", "float64", "bfloat16"],
+    help=(
+      "Operand dtype. bfloat16 routes through ml_dtypes and is only meaningful "
+      "with backend=max:cpu or max:gpu - numpy/opt_einsum will skip with a clear "
+      "reason since they do not support bf16 natively."
+    ),
   )
   p.add_argument("--repeats", type=int, default=11, help="Number of runs")
   p.add_argument("--warmup", type=int, default=2, help="Warmup runs (untimed)")
@@ -428,7 +434,12 @@ def main(argv: list[str] | None = None) -> int:
     p.error("--compare, --compare-engines, and --vs-numpy cannot be combined with --sweep-optimizers")
 
   shapes = _parse_shapes(args.shapes)
-  dtype = np.dtype(args.dtype)
+  if args.dtype == "bfloat16":
+    import ml_dtypes  # noqa: PLC0415
+
+    dtype = np.dtype(ml_dtypes.bfloat16)
+  else:
+    dtype = np.dtype(args.dtype)
   operands = _make_operands(shapes, dtype, args.seed)
   platform_record = {
     "machine": platform.machine(),
