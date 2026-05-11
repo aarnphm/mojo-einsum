@@ -140,7 +140,7 @@ def einsum_reference_py(
             )
         )
 
-    # Copy each operand into a Mojo-owned Float64 buffer (zero-copy
+    # Copy each operand into a Mojo-var Float64 buffer (zero-copy
     # DLPack path is P8 work).
     var data_ptrs = List[UnsafePointer[Float64]]()
     var strides_list = List[List[Int]]()

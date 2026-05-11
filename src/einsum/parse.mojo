@@ -33,7 +33,7 @@ Not handled here (in `plan.mojo`):
 # imports needed for Mojo 1.0.0b1+.
 
 
-alias ELLIPSIS_LABEL: Int = -1
+comptime ELLIPSIS_LABEL: Int = -1
 """Sentinel for the `...` token. Expanded to fresh labels in `expand_ellipsis`."""
 
 
@@ -59,12 +59,12 @@ struct EinsumEquation(Copyable, Movable):
     var label_chars: List[String]
     var has_explicit_output: Bool
 
-    fn __init__(
+    def __init__(
         out self,
-        owned inputs: List[List[Int]],
-        owned output: List[Int],
+        var inputs: List[List[Int]],
+        var output: List[Int],
         n_labels: Int,
-        owned label_chars: List[String],
+        var label_chars: List[String],
         has_explicit_output: Bool,
     ):
         self.inputs = inputs^
@@ -73,32 +73,32 @@ struct EinsumEquation(Copyable, Movable):
         self.label_chars = label_chars^
         self.has_explicit_output = has_explicit_output
 
-    fn __copyinit__(out self, existing: Self):
+    def __copyinit__(out self, existing: Self):
         self.inputs = existing.inputs
         self.output = existing.output
         self.n_labels = existing.n_labels
         self.label_chars = existing.label_chars
         self.has_explicit_output = existing.has_explicit_output
 
-    fn __moveinit__(out self, owned existing: Self):
+    def __moveinit__(out self, var existing: Self):
         self.inputs = existing.inputs^
         self.output = existing.output^
         self.n_labels = existing.n_labels
         self.label_chars = existing.label_chars^
         self.has_explicit_output = existing.has_explicit_output
 
-    fn n_operands(self) -> Int:
+    def n_operands(self) -> Int:
         return len(self.inputs)
 
 
-fn _is_label_byte(c: UInt8) -> Bool:
+def _is_label_byte(c: UInt8) -> Bool:
     """True for ASCII letters a-zA-Z."""
     return (c >= UInt8(ord("a")) and c <= UInt8(ord("z"))) or (
         c >= UInt8(ord("A")) and c <= UInt8(ord("Z"))
     )
 
 
-fn _strip_whitespace(s: String) -> String:
+def _strip_whitespace(s: String) -> String:
     """Return `s` with ASCII space / tab / newline stripped."""
     var out = String()
     var bytes = s.as_bytes()
@@ -111,7 +111,7 @@ fn _strip_whitespace(s: String) -> String:
     return out^
 
 
-fn _tokenize_operand(
+def _tokenize_operand(
     s: String,
     mut intern: List[Int],
     mut label_chars: List[String],
@@ -172,7 +172,7 @@ fn _tokenize_operand(
     return labels^
 
 
-fn parse(eq_in: String) raises -> EinsumEquation:
+def parse(eq_in: String) raises -> EinsumEquation:
     """Parse an einsum equation string into an `EinsumEquation`."""
     var eq = _strip_whitespace(eq_in)
 
@@ -240,7 +240,7 @@ fn parse(eq_in: String) raises -> EinsumEquation:
     )
 
 
-fn expand_ellipsis(
+def expand_ellipsis(
     mut eq: EinsumEquation, operand_ranks: List[Int]
 ) raises:
     """In-place substitute `ELLIPSIS_LABEL` with fresh labels.
@@ -266,7 +266,7 @@ fn expand_ellipsis(
     for i in range(eq.n_operands()):
         var explicit_count = 0
         var has_ellipsis = False
-        var op = eq.inputs[i]
+        ref op = eq.inputs[i]
         for lbl_idx in range(len(op)):
             if op[lbl_idx] == ELLIPSIS_LABEL:
                 has_ellipsis = True
@@ -329,7 +329,7 @@ fn expand_ellipsis(
                 )
             )
         var out = List[Int]()
-        var op = eq.inputs[i]
+        ref op = eq.inputs[i]
         for lbl_idx in range(len(op)):
             var lbl = op[lbl_idx]
             if lbl == ELLIPSIS_LABEL:

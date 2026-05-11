@@ -35,7 +35,7 @@ from memory import UnsafePointer
 from einsum.parse import EinsumEquation
 
 
-fn _resolve_label_sizes(
+def _resolve_label_sizes(
     eq: EinsumEquation,
     operand_shapes: List[List[Int]],
 ) raises -> List[Int]:
@@ -100,7 +100,7 @@ fn _resolve_label_sizes(
     return sizes^
 
 
-fn _flat_offset(
+def _flat_offset(
     label_indices: List[Int],
     operand_labels: List[Int],
     strides: List[Int],
@@ -114,7 +114,7 @@ fn _flat_offset(
     return off
 
 
-fn execute_reference(
+def execute_reference(
     eq: EinsumEquation,
     operand_data: List[UnsafePointer[Float64]],
     operand_shapes: List[List[Int]],
@@ -168,7 +168,7 @@ fn execute_reference(
             break
 
 
-fn compute_output_shape(
+def compute_output_shape(
     eq: EinsumEquation,
     operand_shapes: List[List[Int]],
 ) raises -> List[Int]:

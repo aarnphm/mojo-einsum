@@ -1,34 +1,30 @@
 # Einsum notation
 
-## Einstein summation convention
-
 Take a matrix product $C = A B$. Written elementwise:
 
 $$C_{ik} = \sum_j A_{ij} B_{jk}$$
 
-Look at where each index lives. $i$ and $k$ appear on both sides. $j$ appears only on the right, once on each factor — it gets summed. The output's shape is exactly the labels that survive.
-
-Einstein observed that the $\sum$ symbol is redundant: any index that appears twice on the right but never on the left is, by convention, summed over. The equation becomes:
+the $\sum$ symbol here is redundant, because any index that appears twice on the right but never on the left is, by convention, summed over. The equation then becomes:
 
 $$C_{ik} = A_{ij} B_{jk}$$
 
-NumPy's `einsum` lifts this convention into a string DSL. The same operation is:
+here is the same operations but in numpy:
 
 ```python
 np.einsum("ij,jk->ik", A, B)
 ```
 
-Read left-to-right: operand label sequences separated by commas, an arrow, the output's label sequence. Every label that appears in some input but is missing from the output is summed out.
+Read left-to-right: operand label sequences separated by commas, an arrow, the output's label sequence.
 
 ## Single-operand operations
 
 The convention applies to one operand just as naturally as to two.
 
-**Sum.** `"ij->"` means "take a matrix, contract both `i` and `j` away" — the result is a scalar equal to the sum of all elements:
+**Sum.** `"ij->"` means "take a matrix, contract both `i` and `j` away"—the result is a scalar equal to the sum of all elements:
 
 $$s = \sum_{ij} A_{ij}$$
 
-**Transpose.** `"ij->ji"` is a permutation: the same labels appear on both sides, just reordered. No summation occurs. NumPy and Mojo implementations of this never copy data — they return a view with permuted strides.
+**Transpose.** `"ij->ji"` is a permutation. In both NumPy and Mojo implementations of this we never copy data and just return a view with permuted strides.
 
 **Diagonal.** `"ii->i"` is the trickiest single-operand case. The repeated `i` on the input means *the same index value is used for both axes*. The output has one `i`, so we keep that varying:
 

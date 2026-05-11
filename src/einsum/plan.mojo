@@ -27,10 +27,10 @@ from einsum.parse import EinsumEquation, ELLIPSIS_LABEL
 
 
 # Unary-op kind tags.
-alias UNARY_REDUCE_SUM: Int = 0
-alias UNARY_DIAGONAL: Int = 1
-alias UNARY_TRACE: Int = 2
-alias UNARY_TRANSPOSE: Int = 3
+comptime UNARY_REDUCE_SUM: Int = 0
+comptime UNARY_DIAGONAL: Int = 1
+comptime UNARY_TRACE: Int = 2
+comptime UNARY_TRANSPOSE: Int = 3
 
 
 @fieldwise_init
@@ -76,7 +76,7 @@ struct PairwiseStep(Copyable, Movable):
 
 
 # Tagged-union via `Variant` — the stdlib idiom.
-alias PlanStep = Variant[UnaryStep, PairwiseStep]
+comptime PlanStep = Variant[UnaryStep, PairwiseStep]
 
 
 @fieldwise_init
@@ -97,21 +97,21 @@ struct ContractionPlan(Copyable, Movable):
 # Dim classification (B / K / M / N)
 # ─────────────────────────────────────────────────────────────────────
 
-fn _label_in(labels: List[Int], lbl: Int) -> Bool:
+def _label_in(labels: List[Int], lbl: Int) -> Bool:
     for i in range(len(labels)):
         if labels[i] == lbl:
             return True
     return False
 
 
-fn _index_of(labels: List[Int], lbl: Int) -> Int:
+def _index_of(labels: List[Int], lbl: Int) -> Int:
     for i in range(len(labels)):
         if labels[i] == lbl:
             return i
     return -1
 
 
-fn classify_pair(
+def classify_pair(
     lhs_labels: List[Int],
     rhs_labels: List[Int],
     out_labels: List[Int],
@@ -206,9 +206,9 @@ fn classify_pair(
     return PairwiseStep(
         -1,
         -1,
-        lhs_labels,
-        rhs_labels,
-        out_labels,
+        lhs_labels.copy(),
+        rhs_labels.copy(),
+        out_labels.copy(),
         batch_axes_lhs^,
         batch_axes_rhs^,
         contract_axes_lhs^,
@@ -223,7 +223,7 @@ fn classify_pair(
 # Unary step builder
 # ─────────────────────────────────────────────────────────────────────
 
-fn build_unary_step(
+def build_unary_step(
     operand_idx: Int,
     in_labels: List[Int],
     out_labels: List[Int],
@@ -290,8 +290,8 @@ fn build_unary_step(
     return UnaryStep(
         operand_idx,
         kind,
-        in_labels,
-        out_labels,
+        in_labels.copy(),
+        out_labels.copy(),
         reduce_axes^,
         diag_axes^,
         perm^,
@@ -302,7 +302,7 @@ fn build_unary_step(
 # Naive left-to-right path (P1 baseline)
 # ─────────────────────────────────────────────────────────────────────
 
-fn build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
+def build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
     """Build a plan that contracts operands left-to-right.
 
     For each operand `i ≥ 1`, the step output carries labels in
@@ -315,24 +315,24 @@ fn build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
         raise Error(String("build_naive_plan: zero operands"))
 
     if n == 1:
-        var u = build_unary_step(0, eq.inputs[0], eq.output)
+        var u = build_unary_step(0, eq.inputs[0].copy(), eq.output.copy())
         steps.append(PlanStep(u^))
-        return ContractionPlan(steps^, 1, eq.output)
+        return ContractionPlan(steps^, 1, eq.output.copy())
 
-    var acc_labels = eq.inputs[0]
+    var acc_labels = eq.inputs[0].copy()
 
     for i in range(1, n):
         var future_needed = List[Int]()
         for k in range(len(eq.output)):
             future_needed.append(eq.output[k])
         for j in range(i + 1, n):
-            var op_j = eq.inputs[j]
+            ref op_j = eq.inputs[j]
             for k in range(len(op_j)):
                 var lbl = op_j[k]
                 if not _label_in(future_needed, lbl):
                     future_needed.append(lbl)
 
-        var rhs_labels = eq.inputs[i]
+        var rhs_labels = eq.inputs[i].copy()
 
         var step_out = List[Int]()
         for k in range(len(acc_labels)):
@@ -344,11 +344,13 @@ fn build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
             if _label_in(future_needed, lbl) and not _label_in(step_out, lbl):
                 step_out.append(lbl)
 
-        var ps = classify_pair(acc_labels, rhs_labels, step_out)
+        var ps = classify_pair(
+            acc_labels.copy(), rhs_labels.copy(), step_out.copy()
+        )
         ps.lhs_idx = 0
         ps.rhs_idx = 1
         steps.append(PlanStep(ps^))
 
-        acc_labels = step_out
+        acc_labels = step_out^
 
-    return ContractionPlan(steps^, n, eq.output)
+    return ContractionPlan(steps^, n, eq.output.copy())
