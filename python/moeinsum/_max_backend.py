@@ -18,6 +18,7 @@ appeared near a NumPy result". Extremely small but important bit of honesty.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import reduce
 from operator import mul
@@ -48,7 +49,8 @@ class _Executable:
   device: Device
 
 
-_MODEL_CACHE: dict[tuple[object, ...], _Executable] = {}
+_MODEL_CACHE_MAX = 512
+_MODEL_CACHE: OrderedDict[tuple[object, ...], _Executable] = OrderedDict()
 _MODEL_CACHE_LOCK = RLock()
 
 
@@ -332,6 +334,10 @@ def execute_max(
     if executable is None:
       executable = _compile(eq, shapes, path, max_dtype, backend)
       _MODEL_CACHE[key] = executable
+      while len(_MODEL_CACHE) > _MODEL_CACHE_MAX:
+        _MODEL_CACHE.popitem(last=False)
+    else:
+      _MODEL_CACHE.move_to_end(key)
 
   inputs = [_input_buffer(array, executable.device) for array in max_arrays]
   result = executable.model.execute(*inputs)[0]

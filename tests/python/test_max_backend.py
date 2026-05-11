@@ -119,3 +119,72 @@ def test_max_backend_model_cache_keys_on_shape() -> None:
   assert after - before == 2, (
     f"shape change should produce a fresh compile (cache grows by 2); grew by {after - before}"
   )
+
+
+def test_max_backend_model_cache_lru_evicts_at_max() -> None:
+  """`_MODEL_CACHE` is LRU-bounded - a long-running server compiling new
+  signatures every call must not leak. Squeeze the cap, fill past it,
+  and check the oldest entry is the one that got dropped (MRU survives).
+  Restore the cap afterwards so the rest of the suite uses the real bound.
+  """
+  from moeinsum import _max_backend  # noqa: PLC0415
+
+  _max_backend._MODEL_CACHE.clear()
+  saved_cap = _max_backend._MODEL_CACHE_MAX
+  _max_backend._MODEL_CACHE_MAX = 3
+  try:
+    rng = np.random.default_rng(0)
+    shapes = [(3, 4), (3, 5), (3, 6), (3, 7)]  # 4 distinct compiles, cap=3
+    for cols in (s[1] for s in shapes):
+      a = rng.standard_normal((3, cols)).astype(np.float32)
+      b = rng.standard_normal((cols, 2)).astype(np.float32)
+      moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+
+    assert len(_max_backend._MODEL_CACHE) == 3, (
+      f"LRU should cap at 3, got {len(_max_backend._MODEL_CACHE)}"
+    )
+    # Oldest key was the (3,4)x(4,2) compile - it should have been
+    # evicted; the remaining three are (3,5), (3,6), (3,7).
+    surviving_shapes = {key[1] for key in _max_backend._MODEL_CACHE}
+    assert ((3, 4), (4, 2)) not in surviving_shapes, "oldest entry should have been evicted"
+  finally:
+    _max_backend._MODEL_CACHE_MAX = saved_cap
+    _max_backend._MODEL_CACHE.clear()
+
+
+def test_max_backend_model_cache_lru_promotes_on_hit() -> None:
+  """A cache hit moves the entry to MRU. After hitting an old entry, a
+  subsequent eviction should drop the previously second-oldest, not the
+  freshly-promoted one."""
+  from moeinsum import _max_backend  # noqa: PLC0415
+
+  _max_backend._MODEL_CACHE.clear()
+  saved_cap = _max_backend._MODEL_CACHE_MAX
+  _max_backend._MODEL_CACHE_MAX = 3
+  try:
+    rng = np.random.default_rng(0)
+    # Fill at cap.
+    pairs = [(3, 4), (3, 5), (3, 6)]
+    for cols in pairs:
+      a = rng.standard_normal((3, cols[1])).astype(np.float32)
+      b = rng.standard_normal((cols[1], 2)).astype(np.float32)
+      moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+    assert len(_max_backend._MODEL_CACHE) == 3
+
+    # Hit the oldest entry - it should move to MRU.
+    a = rng.standard_normal((3, 4)).astype(np.float32)
+    b = rng.standard_normal((4, 2)).astype(np.float32)
+    moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+    assert len(_max_backend._MODEL_CACHE) == 3, "hit should not grow cache"
+
+    # Insert a 4th distinct signature - the (3,5) entry should evict,
+    # not (3,4) which we just promoted.
+    a = rng.standard_normal((3, 7)).astype(np.float32)
+    b = rng.standard_normal((7, 2)).astype(np.float32)
+    moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+    surviving = {key[1] for key in _max_backend._MODEL_CACHE}
+    assert ((3, 4), (4, 2)) in surviving, "freshly-promoted entry must survive"
+    assert ((3, 5), (5, 2)) not in surviving, "second-oldest should have evicted"
+  finally:
+    _max_backend._MODEL_CACHE_MAX = saved_cap
+    _max_backend._MODEL_CACHE.clear()
