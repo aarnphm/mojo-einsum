@@ -1,0 +1,44 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install ruff
+        run: pip install ruff
+      - name: lint
+        run: ruff check python tests
+      - name: format-check
+        run: ruff format --check python tests
+
+  pyproject-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: validate pyproject.toml
+        run: |
+          python -c "import tomllib; tomllib.loads(open('pyproject.toml').read())"
+          python -c "
+          import tomllib
+          data = tomllib.loads(open('pyproject.toml').read())
+          assert 'project' in data, 'missing [project]'
+          assert 'tool' in data and 'mohaus' in data['tool'], 'missing [tool.mohaus]'
+          print('pyproject.toml is well-formed')
+          "

@@ -107,18 +107,12 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument(
     "--optimize",
     default="auto",
-    help=(
-      "Path optimizer: naive / greedy / optimal / auto / "
-      "random-greedy / random-greedy-N / branch-{all,2,1}"
-    ),
+    help=("Path optimizer: naive / greedy / optimal / auto / random-greedy / random-greedy-N / branch-{all,2,1}"),
   )
   p.add_argument(
     "--sweep-optimizers",
     action="store_true",
-    help=(
-      "Run every standard optimizer and report median-time ratios "
-      "instead of a single measurement"
-    ),
+    help=("Run every standard optimizer and report median-time ratios instead of a single measurement"),
   )
   p.add_argument(
     "--dtype",
@@ -159,10 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     for opt in optimizers:
       for _ in range(args.warmup):
         _time_one(args.equation, operands, args.backend, opt)
-      timings = [
-        _time_one(args.equation, operands, args.backend, opt)
-        for _ in range(args.repeats)
-      ]
+      timings = [_time_one(args.equation, operands, args.backend, opt) for _ in range(args.repeats)]
       per_opt[opt] = {
         "ms_median": statistics.median(timings),
         "ms_min": min(timings),
@@ -171,9 +162,7 @@ def main(argv: list[str] | None = None) -> int:
       }
     fastest_name = min(per_opt, key=lambda k: per_opt[k]["ms_median"])
     fastest = per_opt[fastest_name]["ms_median"]
-    ratios = {
-      name: round(rec["ms_median"] / fastest, 3) for name, rec in per_opt.items()
-    }
+    ratios = {name: round(rec["ms_median"] / fastest, 3) for name, rec in per_opt.items()}
     result = {
       "equation": args.equation,
       "shapes": [list(s) for s in shapes],
@@ -230,9 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     result["numpy_ms_median"] = np_median
     result["numpy_ms_min"] = min(np_timings)
     result["numpy_ms_max"] = max(np_timings)
-    result["vs_numpy_ratio"] = round(
-      statistics.median(timings) / np_median, 3
-    )
+    result["vs_numpy_ratio"] = round(statistics.median(timings) / np_median, 3)
 
   json.dump(result, sys.stdout, indent=2)
   sys.stdout.write("\n")

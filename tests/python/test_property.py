@@ -29,7 +29,6 @@ import numpy as np
 import pytest
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
-
 from moeinsum._cost import path_cost
 
 # ---------------------------------------------------------------------
@@ -67,18 +66,14 @@ def equations(
   repeated) NumPy convention. Returns the equation in the form
   `"ab,bc->ac"` style — explicit output, no ellipsis, no repeated
   labels within an operand."""
-  n_operands = draw(
-    st.integers(min_value=min_operands, max_value=max_operands)
-  )
+  n_operands = draw(st.integers(min_value=min_operands, max_value=max_operands))
 
   operand_labels: list[str] = [draw(labelstrings()) for _ in range(n_operands)]
 
   # Label size mapping. Dims kept small so generated tensors are cheap
   # to allocate inside the test.
   used_labels = sorted({c for s in operand_labels for c in s})
-  size_map = {
-    c: draw(st.integers(min_value=2, max_value=5)) for c in used_labels
-  }
+  size_map = {c: draw(st.integers(min_value=2, max_value=5)) for c in used_labels}
 
   # Implicit output: labels appearing exactly once across operands,
   # sorted alphabetically (the numpy.einsum convention).
@@ -142,9 +137,9 @@ def test_path_satisfies_working_set_semantics(
   optimize: str,
 ) -> None:
   """For n operands, any path must:
-    - have len == n - 1 (each pairwise step removes one operand)
-    - reference only valid working-set indices at each step
-    - leave exactly 1 tensor in the working set at the end
+  - have len == n - 1 (each pairwise step removes one operand)
+  - reference only valid working-set indices at each step
+  - leave exactly 1 tensor in the working set at the end
   """
   eq, shapes = case
   n = len(shapes)
@@ -152,9 +147,7 @@ def test_path_satisfies_working_set_semantics(
 
   # No unary steps in compute_path output — only pairwise.
   assert all(len(step) == 2 for step in path)
-  assert len(path) == n - 1, (
-    f"expected {n - 1} pairwise steps, got {len(path)}"
-  )
+  assert len(path) == n - 1, f"expected {n - 1} pairwise steps, got {len(path)}"
 
   working_size = n
   for step_idx, (li, ri) in enumerate(path):
@@ -189,9 +182,7 @@ def test_optimal_flops_le_greedy(
     # path_cost rejects ellipsis-and-similar; the generator never
     # produces those, but the safety net is cheap.
     return
-  assert co <= cg, (
-    f"optimal FLOPs {co} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
-  )
+  assert co <= cg, f"optimal FLOPs {co} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
 
 
 @given(case=equations(min_operands=3, max_operands=4))
@@ -209,9 +200,7 @@ def test_branch_all_flops_le_greedy(
     cb = cast(int, path_cost(eq, shapes, branch)["total_flops"])
   except ValueError:
     return
-  assert cb <= cg, (
-    f"branch-all FLOPs {cb} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
-  )
+  assert cb <= cg, f"branch-all FLOPs {cb} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
 
 
 # ---------------------------------------------------------------------
@@ -504,9 +493,7 @@ def test_branch_2_le_greedy(
     cb = cast(int, path_cost(eq, shapes, branch_2)["total_flops"])
   except ValueError:
     return
-  assert cb <= cg, (
-    f"branch-2 FLOPs {cb} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
-  )
+  assert cb <= cg, f"branch-2 FLOPs {cb} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
 
 
 @given(case=equations(min_operands=2, max_operands=4))
@@ -524,9 +511,7 @@ def test_auto_le_naive(
     ca = cast(int, path_cost(eq, shapes, auto)["total_flops"])
   except ValueError:
     return
-  assert ca <= cn, (
-    f"auto FLOPs {ca} > naive FLOPs {cn} for {eq!r} @ {shapes}"
-  )
+  assert ca <= cn, f"auto FLOPs {ca} > naive FLOPs {cn} for {eq!r} @ {shapes}"
 
 
 # ---------------------------------------------------------------------

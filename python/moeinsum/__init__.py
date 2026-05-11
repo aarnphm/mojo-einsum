@@ -53,10 +53,8 @@ _BACKENDS = ("reference",)
 # FFI yet — used to produce phase-aware error messages instead of an
 # opaque "unknown backend" string when callers try them.
 _PLANNED_BACKENDS = {
-  "max": "P5 — needs the FFI to plumb TileTensor handles. "
-  "Skeleton at src/einsum/backends/max.mojo. See docs/ffi.md.",
-  "native": "P11/P12 — SIMD-tiled CPU GETT + SM90 WGMMA. "
-  "Skeleton at src/einsum/backends/native.mojo.",
+  "max": "P5 — needs the FFI to plumb TileTensor handles. Skeleton at src/einsum/backends/max.mojo. See docs/ffi.md.",
+  "native": "P11/P12 — SIMD-tiled CPU GETT + SM90 WGMMA. Skeleton at src/einsum/backends/native.mojo.",
   "max_graph": "P14 — Python-side plan-to-graph translation shipped; "
   "the max.graph.ops codegen is the remaining seam. "
   "See python/moeinsum/_max_graph.py.",
@@ -130,33 +128,21 @@ def _validate_explicit_path(
     if len(step_tuple) == 1:
       (idx,) = step_tuple
       if not (0 <= idx < working_size):
-        raise ValueError(
-          f"explicit path step {step_idx}: index {idx} out of range "
-          f"[0, {working_size})"
-        )
+        raise ValueError(f"explicit path step {step_idx}: index {idx} out of range [0, {working_size})")
       path.append(step_tuple)
     elif len(step_tuple) == 2:
       li, ri = step_tuple
       if not (0 <= li < working_size) or not (0 <= ri < working_size):
-        raise ValueError(
-          f"explicit path step {step_idx}: indices ({li}, {ri}) out of range "
-          f"[0, {working_size})"
-        )
+        raise ValueError(f"explicit path step {step_idx}: indices ({li}, {ri}) out of range [0, {working_size})")
       if li == ri:
-        raise ValueError(
-          f"explicit path step {step_idx}: lhs and rhs both reference {li}"
-        )
+        raise ValueError(f"explicit path step {step_idx}: lhs and rhs both reference {li}")
       working_size -= 1  # two removed, one appended
       path.append(step_tuple)
     else:
-      raise ValueError(
-        f"explicit path step {step_idx}: arity {len(step_tuple)} not in (1, 2)"
-      )
+      raise ValueError(f"explicit path step {step_idx}: arity {len(step_tuple)} not in (1, 2)")
 
   if working_size != 1:
-    raise ValueError(
-      f"explicit path leaves {working_size} tensors in working set; expected 1"
-    )
+    raise ValueError(f"explicit path leaves {working_size} tensors in working set; expected 1")
   return path
 
 
@@ -225,9 +211,7 @@ def einsum(
       (or the first operand's framework when `return_type=None`).
   """
   if not isinstance(deterministic, bool):
-    raise TypeError(
-      f"deterministic must be bool, got {type(deterministic).__name__}"
-    )
+    raise TypeError(f"deterministic must be bool, got {type(deterministic).__name__}")
   if accum_dtype is not None:
     # Resolve up-front so a typo raises here instead of inside the FFI.
     # Real low-precision accumulation lands with MaxBackend; today we
@@ -235,22 +219,16 @@ def einsum(
     try:
       np.dtype(accum_dtype)
     except TypeError as exc:
-      raise TypeError(
-        f"accum_dtype {accum_dtype!r} is not a recognised numpy dtype"
-      ) from exc
+      raise TypeError(f"accum_dtype {accum_dtype!r} is not a recognised numpy dtype") from exc
   if backend not in _BACKENDS:
     if backend in _PLANNED_BACKENDS:
-      raise NotImplementedError(
-        f"backend {backend!r}: {_PLANNED_BACKENDS[backend]}"
-      )
+      raise NotImplementedError(f"backend {backend!r}: {_PLANNED_BACKENDS[backend]}")
     raise ValueError(f"unknown backend {backend!r}; available: {_BACKENDS}")
   if _is_explicit_path(optimize):
     # Validate eagerly so callers get a clear error. The reference backend
     # ignores path order (it's a global-index loop), so we don't plumb the
     # explicit path through; the validation is the only side-effect for v0.1.
-    _validate_explicit_path(
-      cast("Sequence[Sequence[int]]", optimize), len(operands)
-    )
+    _validate_explicit_path(cast("Sequence[Sequence[int]]", optimize), len(operands))
   elif not _is_known_optimize(cast("str", optimize)):
     raise ValueError(f"unknown optimize {optimize!r}; available: {_OPTIMIZE}")
 
@@ -300,9 +278,7 @@ def einsum_path(
   shapes_tuple = tuple(tuple(s) for s in operand_shapes)
 
   if _is_explicit_path(optimize):
-    explicit_path = _validate_explicit_path(
-      cast("Sequence[Sequence[int]]", optimize), len(shapes_tuple)
-    )
+    explicit_path = _validate_explicit_path(cast("Sequence[Sequence[int]]", optimize), len(shapes_tuple))
     # Caller-supplied paths bypass the LRU — the path is already
     # materialized, caching adds nothing.
     return explicit_path

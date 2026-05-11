@@ -216,33 +216,29 @@ def plan_to_graph_spec(
         if seen[c] > 1:
           has_repeat = True
       if has_repeat:
-        spec.ops.append(
-          (
-            "diagonal",
-            {
-              "step": step_idx,
-              "operand": idx,
-              "src_labels": labels,
-              "dst_labels": "".join(dict.fromkeys(labels)),
-            },
-          )
-        )
+        spec.ops.append((
+          "diagonal",
+          {
+            "step": step_idx,
+            "operand": idx,
+            "src_labels": labels,
+            "dst_labels": "".join(dict.fromkeys(labels)),
+          },
+        ))
         labels = "".join(dict.fromkeys(labels))
 
       # Reduce-out any labels not in `future`.
       survived = "".join(c for c in labels if c in future)
       if survived != labels:
-        spec.ops.append(
-          (
-            "reduce_sum",
-            {
-              "step": step_idx,
-              "operand": idx,
-              "src_labels": labels,
-              "dst_labels": survived,
-            },
-          )
-        )
+        spec.ops.append((
+          "reduce_sum",
+          {
+            "step": step_idx,
+            "operand": idx,
+            "src_labels": labels,
+            "dst_labels": survived,
+          },
+        ))
         labels = survived
 
       working_labels[idx] = labels
@@ -259,33 +255,27 @@ def plan_to_graph_spec(
     for j, w in enumerate(working_labels):
       if j != li and j != ri:
         future.update(w)
-    out_labels = "".join(
-      dict.fromkeys(c for c in (lhs + rhs) if c in future)
-    )
+    out_labels = "".join(dict.fromkeys(c for c in (lhs + rhs) if c in future))
 
     cls = classify_pair(lhs, rhs, out_labels)
-    spec.ops.append(
-      (
-        "matmul",
-        {
-          "step": step_idx,
-          "lhs": li,
-          "rhs": ri,
-          "lhs_labels": lhs,
-          "rhs_labels": rhs,
-          "out_labels": out_labels,
-          "batch": cls.batch,
-          "contract": cls.contract,
-          "free_lhs": cls.free_lhs,
-          "free_rhs": cls.free_rhs,
-        },
-      )
-    )
+    spec.ops.append((
+      "matmul",
+      {
+        "step": step_idx,
+        "lhs": li,
+        "rhs": ri,
+        "lhs_labels": lhs,
+        "rhs_labels": rhs,
+        "out_labels": out_labels,
+        "batch": cls.batch,
+        "contract": cls.contract,
+        "free_lhs": cls.free_lhs,
+        "free_rhs": cls.free_rhs,
+      },
+    ))
 
     # Pop li, ri; append the intermediate.
-    new_working: list[str] = [
-      w for j, w in enumerate(working_labels) if j != li and j != ri
-    ]
+    new_working: list[str] = [w for j, w in enumerate(working_labels) if j != li and j != ri]
     new_working.append(out_labels)
     working_labels = new_working
     step_idx += 1
@@ -293,16 +283,14 @@ def plan_to_graph_spec(
   # The output of the final step may differ from `final_output` in
   # axis order — emit a trailing transpose if so.
   if len(working_labels) == 1 and working_labels[0] != final_output:
-    spec.ops.append(
-      (
-        "transpose",
-        {
-          "step": step_idx,
-          "src_labels": working_labels[0],
-          "dst_labels": final_output,
-        },
-      )
-    )
+    spec.ops.append((
+      "transpose",
+      {
+        "step": step_idx,
+        "src_labels": working_labels[0],
+        "dst_labels": final_output,
+      },
+    ))
     step_idx += 1
 
   spec.result_index = step_idx - 1

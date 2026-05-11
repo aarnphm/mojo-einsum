@@ -14,10 +14,9 @@ forthcoming MaxBackend.
 
 from __future__ import annotations
 
+import moeinsum
 import numpy as np
 import pytest
-
-import moeinsum
 
 
 def test_explicit_path_round_trips() -> None:
@@ -47,9 +46,7 @@ def test_explicit_path_returns_correct_einsum_result() -> None:
   ]
   expected = np.einsum("ij,jk,kl->il", *arrays, optimize=True)
   # Naive (left-to-right) explicit path.
-  actual = moeinsum.einsum(
-    "ij,jk,kl->il", *arrays, optimize=[(0, 1), (0, 1)]
-  )
+  actual = moeinsum.einsum("ij,jk,kl->il", *arrays, optimize=[(0, 1), (0, 1)])
   np.testing.assert_allclose(actual, expected, atol=1e-10, rtol=1e-10)
 
 
@@ -60,24 +57,18 @@ def test_explicit_path_rejects_out_of_range() -> None:
 
 def test_explicit_path_rejects_same_lhs_rhs() -> None:
   with pytest.raises(ValueError, match="both reference"):
-    moeinsum.einsum_path(
-      "ij,jk,kl->il", (2, 3), (3, 4), (4, 5), optimize=[(1, 1), (0, 1)]
-    )
+    moeinsum.einsum_path("ij,jk,kl->il", (2, 3), (3, 4), (4, 5), optimize=[(1, 1), (0, 1)])
 
 
 def test_explicit_path_rejects_bad_arity() -> None:
   with pytest.raises(ValueError, match="arity"):
-    moeinsum.einsum_path(
-      "ij,jk->ik", (2, 3), (3, 4), optimize=[(0, 1, 2)]
-    )
+    moeinsum.einsum_path("ij,jk->ik", (2, 3), (3, 4), optimize=[(0, 1, 2)])
 
 
 def test_explicit_path_rejects_incomplete_path() -> None:
   """A 3-operand contraction needs 2 pairwise steps. One step leaves 2 tensors."""
   with pytest.raises(ValueError, match="leaves 2"):
-    moeinsum.einsum_path(
-      "ij,jk,kl->il", (2, 3), (3, 4), (4, 5), optimize=[(0, 1)]
-    )
+    moeinsum.einsum_path("ij,jk,kl->il", (2, 3), (3, 4), (4, 5), optimize=[(0, 1)])
 
 
 def test_explicit_path_single_operand() -> None:

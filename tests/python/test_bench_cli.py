@@ -164,16 +164,13 @@ def test_module_entry_invalid_equation() -> None:
 
 
 @pytest.mark.skipif(
-  shutil.which("moeinsum-bench") is None
-  and not (Path(_python()).parent / "moeinsum-bench").is_file(),
+  shutil.which("moeinsum-bench") is None and not (Path(_python()).parent / "moeinsum-bench").is_file(),
   reason="moeinsum-bench console script not on PATH",
 )
 def test_console_script_entry() -> None:
   """The `[project.scripts] moeinsum-bench = "moeinsum.bench:main"`
   entry must produce the same JSON shape as `python -m`."""
-  script = shutil.which("moeinsum-bench") or str(
-    Path(_python()).parent / "moeinsum-bench"
-  )
+  script = shutil.which("moeinsum-bench") or str(Path(_python()).parent / "moeinsum-bench")
   args = _bench_args("ij,jk->ik", ["3,4", "4,5"])
   proc = _run(script, *args)
   assert proc.returncode == 0

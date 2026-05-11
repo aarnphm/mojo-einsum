@@ -20,8 +20,8 @@ import pytest
 
 opt_einsum = pytest.importorskip("opt_einsum")
 
-import moeinsum
-from moeinsum._cost import path_cost
+import moeinsum  # noqa: E402  — importorskip must run before the import
+from moeinsum._cost import path_cost  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────
 # Test corpus — tensor-network-flavored cases
@@ -135,14 +135,11 @@ def test_greedy_at_least_as_good_as_opt_einsum(
   against any subtle cost-function divergence — both should be the same
   `reduced_size` heuristic."""
   ours = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
-  oe_path, _ = opt_einsum.contract_path(
-    eq, *shapes, optimize="greedy", shapes=True
-  )
+  oe_path, _ = opt_einsum.contract_path(eq, *shapes, optimize="greedy", shapes=True)
   ours_flops = path_cost(eq, shapes, ours)["total_flops"]
   oe_flops = path_cost(eq, shapes, oe_path)["total_flops"]
   assert ours_flops <= oe_flops * 1.05, (
-    f"moeinsum greedy FLOPs {ours_flops} > opt_einsum greedy FLOPs "
-    f"{oe_flops} * 1.05 for {eq!r} @ {shapes}"
+    f"moeinsum greedy FLOPs {ours_flops} > opt_einsum greedy FLOPs {oe_flops} * 1.05 for {eq!r} @ {shapes}"
   )
 
 
@@ -168,12 +165,9 @@ def test_optimal_matches_opt_einsum_optimal(
   must match exactly (there can be ties so the paths themselves may differ
   in order)."""
   ours = moeinsum.einsum_path(eq, *shapes, optimize="optimal")
-  oe_path, _ = opt_einsum.contract_path(
-    eq, *shapes, optimize="optimal", shapes=True
-  )
+  oe_path, _ = opt_einsum.contract_path(eq, *shapes, optimize="optimal", shapes=True)
   ours_flops = path_cost(eq, shapes, ours)["total_flops"]
   oe_flops = path_cost(eq, shapes, oe_path)["total_flops"]
   assert ours_flops == oe_flops, (
-    f"DP-optimal FLOPs disagree: moeinsum={ours_flops} vs "
-    f"opt_einsum={oe_flops} for {eq!r} @ {shapes}"
+    f"DP-optimal FLOPs disagree: moeinsum={ours_flops} vs opt_einsum={oe_flops} for {eq!r} @ {shapes}"
   )
