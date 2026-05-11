@@ -251,7 +251,10 @@ def einsum_path(
   key = ("__einsum_path__", eq, shapes_tuple, optimize)
   cached = PLAN_CACHE.get(key)
   if cached is not None:
-    return cast("list[tuple[int, ...]]", cached)
+    # Hand back a fresh list — the path tuples are immutable, but the
+    # outer container is not, so we don't want a caller's `path.append(...)`
+    # to pollute the next cache hit.
+    return list(cast("list[tuple[int, ...]]", cached))
 
   shapes_lists = [list(s) for s in operand_shapes]
   if optimize == "naive" or len(shapes_tuple) <= 1:
@@ -261,5 +264,7 @@ def einsum_path(
     # compute_path's greedy / optimal / auto algorithms return only
     # pairwise steps; 1-operand cases trivially produce an empty path.
     result = _einsum_compute_path_native(eq, shapes_lists, optimize)
-  PLAN_CACHE.put(key, result)
-  return result
+  # Store an immutable snapshot — defends against the same caller-
+  # mutation surface on the cold path.
+  PLAN_CACHE.put(key, tuple(result))
+  return list(result)
