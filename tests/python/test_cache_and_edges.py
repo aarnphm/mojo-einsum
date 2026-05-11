@@ -10,7 +10,6 @@ from __future__ import annotations
 import moeinsum
 import numpy as np
 import pytest
-
 from moeinsum import PLAN_CACHE
 
 

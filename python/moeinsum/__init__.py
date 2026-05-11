@@ -15,14 +15,15 @@ DLPack zero-copy + JAX/PyTorch/MLX interop arrives in P8.
 
 from __future__ import annotations
 
+# The mohaus editable hook rebuilds `_native` on first import and needs
+# to link a libpython. uv-managed Pythons aren't on a system loader
+# path, so set MOJO_PYTHON_LIBRARY before the FFI import — *unless* the
+# environment already provides it (CI, custom toolchains). This has to
+# live at module top before `_native` is touched.
 import os as _os
 import sysconfig as _sysconfig
 from pathlib import Path as _Path
-from typing import cast
 
-# Set MOJO_PYTHON_LIBRARY before _native is imported so the mohaus
-# editable-rebuild hook can link a libpython for the active interpreter.
-# Skipped if the user already set the env var (CI, custom builds).
 if "MOJO_PYTHON_LIBRARY" not in _os.environ:
   _libdir = _sysconfig.get_config_var("LIBDIR")
   _libname = _sysconfig.get_config_var("LDLIBRARY")
@@ -30,6 +31,8 @@ if "MOJO_PYTHON_LIBRARY" not in _os.environ:
     _candidate = _Path(_libdir) / _libname
     if _candidate.is_file():
       _os.environ["MOJO_PYTHON_LIBRARY"] = str(_candidate)
+
+from typing import cast
 
 import numpy as np
 from numpy.typing import DTypeLike

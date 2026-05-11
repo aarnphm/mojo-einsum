@@ -36,59 +36,55 @@ Legend: ✅ shipped, ⏳ planned, ❌ not in scope. "n/a" means the comparison d
 
 expectation:
 
-- **Matmul-shaped einsums** (`ij,jk->ik`, `bij,bjk->bik`): 
-	- Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes, because we lowered directly to MAX's `linalg.batched_matmul`. 
-	- _call-site overhead_ — see below.
-- **Multi-operand chains** (`ij,jk,kl,lm->im`): 
-	- same matmul kernel for each step, plus path-optimizer choice. 
-	- based on opt_einsum's `optimal` exactly (same algorithm). 
-	- Should be functionally identical to JAX + opt_einsum on these workloads.
-- **Irregular contractions** (heavy permute, awkward strides): 
-	- moeinsum's `max` does TTGT to physically materializes the permute. 
-	- PyTorch/JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5–3× on these shapes. 
+- **Matmul-shaped einsums** (`ij,jk->ik`, `bij,bjk->bik`):
+	- Should be within ±5% of PyTorch's BMM, JAX's `dot_general`, and cuBLAS direct calls on equivalent shapes, because we lower directly to MAX's `linalg.batched_matmul`.
+	- _call-site overhead_ matters separately; see below.
+- **Multi-operand chains** (`ij,jk,kl,lm->im`):
+	- Same matmul kernel for each step, plus path-optimizer choice.
+	- `optimal` uses the same DP recurrence as opt_einsum.
+	- Results should match JAX + opt_einsum on these workloads.
+- **Irregular contractions** (heavy permute, awkward strides):
+	- moeinsum's `max` backend currently does TTGT and materializes the permute.
+	- PyTorch/JAX do the same. cuTENSOR's GETT avoids the materialization and wins by ~1.5-3x on these shapes.
 	- The `native` backend's P11/P12 GETT implementation targets parity here.
 - **Tensor networks** (n > 20 operands, dense contractions):
 	- opt_einsum's greedy is suboptimal.
 	- cotengra's hypergraph paths win by orders of magnitude.
 - **Call-site overhead** (latency of `einsum("ij,jk->ik", a, b)` over hot cache):
 	- PyTorch and JAX both parse the equation, call opt_einsum, classify dims, and dispatch BMM on every call.
-	- for small tensors it can dominate the FLOPs.
-	- our JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel.
+	- For small tensors it can dominate the FLOPs.
+	- moeinsum's JIT plan cache (P7) hits a hash lookup and dispatches directly to the cached kernel.
 		- Expected ~10x reduction in call-site latency for repeated small einsums.
 
 ## Gaps
 
 - **No cotengra equivalent.** For tensor-network workloads, you must compute the path externally. This is a deliberate v0.1 scoping decision; opt_einsum's algorithm family covers ≤30 operands well, and that handles all ML use cases. Quantum-circuit simulation and similar genuinely need cotengra.
 - **No GETT yet.** Phase 11/12 work. Until then, awkward permutes go through TTGT, with the bandwidth cost that implies.
-- **No `random-greedy` or `branch`.** yet
+- **No `random-greedy` or `branch`.** opt_einsum has them; moeinsum's `path.mojo` will get them. Until then, pass an explicit path if one of those algorithms matters.
 - **Limited dtypes.** v0.1 ships fp32 / fp64 internally. fp16, bf16, fp8 (e4m3, e5m2), int arrive in P9 with accumulator handling. Until then, callers should pre-cast.
--  **No autograd.** PyTorch and JAX wrap their einsum with autograd.
+- **No autograd.** PyTorch and JAX wrap their einsum with autograd; moeinsum is a primitive.
 
 ## Features
 
-- Backend-pluggable dispatch (`reference` / `max` / `native` / `graph`) means we can ship correct-and-slow on day 2, fast-and-irregular on day 30, whole-graph-fused on day 60, and the user-facing API doesn't change. PyTorch and JAX have variants of this internally but don't expose the seam to users.
+- **Backend-pluggable dispatch.** `reference`, `max`, `native`, and `max_graph` share the same equation and plan IR. PyTorch and JAX have variants of this internally but do not expose the seam to users.
+- **Compile-time-known paths.** When operand shapes are compile-time `alias`, the path optimizer runs in `@parameter` evaluation and emits a straight-line sequence of GEMM calls. The v0.1 API still takes runtime equation strings; compile-time overloads arrive when P10 lands.
+- **The JIT plan cache.** A per-(equation, dtype-sig, rank-sig, backend) cache makes the runtime API behave like a compile-time-specialized library after the first call. This is the cuTENSOR strategy without the NVRTC tax.
 
-**Compile-time-known paths.** When operand shapes are compile-time `alias`, the path optimizer runs in `@parameter` evaluation and emits a straight-line sequence of GEMM calls. Zero runtime parsing. Zero runtime planning. cuTENSOR 2.0 reaches the same place with NVRTC JIT — paying the JIT cost at the first call. Mojo pays it at _build_ time. (Hidden caveat: the v0.1 API takes runtime equation strings — compile-time-known paths arrive when the API exposes a `comptime` overload, planned for P10.)
-
-**The JIT plan cache.** Per-(equation, dtype-sig, rank-sig, backend) cache makes the runtime API behave like a compile-time-specialized library after the first call. cuTENSOR 2.0 has its plan cache; PyTorch / JAX don't (at the einsum level — `torch.compile` and `jit` work at the graph level above einsum). This is the cuTENSOR strategy applied without the NVRTC tax.
-
-**Documentation depth.** `notation.md` + `derivations.md` + `perf.md` + this page derive the algorithm from first principles. Most einsum implementations document the API; almost none derive the BMM lowering, the contraction-tree cost models, or the √K accumulation rule. The user-facing benefit: somebody who reads these docs can debug an unexpected einsum result by understanding what the implementation chose, instead of by reading source.
-
-## What we steal from each
+## What I steal from each
 
 This is the moneyball table — given Mojo's unique leverage, where does it pay to mimic vs. innovate.
 
 | From           | Steal                                                                  | Why                                                                           |
 | -------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **opt_einsum** | Path-finding algorithm family (greedy, optimal, random-greedy, branch) | Smith & Gray got this right. No upside to re-deriving.                        |
+| **opt_einsum** | Path-finding algorithm family (greedy, optimal, random-greedy, branch) | Smith & Gray got this right. Good way for me to learn                        |
 | **PyTorch**    | `sumproduct_pair` four-bucket classification                           | The B/K/M/N taxonomy is the right factorization. JAX uses the same algorithm. |
 | **JAX**        | The lhs/rhs-swap output-permutation trick                              | Saves a final transpose on ~50% of contractions. One-line code change.        |
 | **cuTENSOR**   | GETT algorithm; plan-cache pattern                                     | The right kernel design and the right caching strategy, separately.           |
-| **TBLIS**      | BLIS-packing-aware tensor contraction                                  | The CPU implementation of GETT — same idea, different hardware.               |
+| **TBLIS**      | BLIS-packing-aware tensor contraction                                  | The CPU implementation of GETT.               |
 | **MLX**        | Lazy evaluation for whole-graph fusion                                 | `max_graph` backend P14 — let MAX do the fusion, don't reinvent it.           |
 | **cotengra**   | (Future) hypergraph paths                                              | The right algorithm for n > 30. Out of v0.1; potentially Phase 16+.           |
 
-## What we deliberately don't steal
+## What I have in mind
 
 **Tensor Comprehensions' polyhedral approach.** Beautiful abstraction, didn't ship to production. The lesson is that schedule-search compilers lose to specialized kernel libraries + simple dispatch — exactly what moeinsum does.
 

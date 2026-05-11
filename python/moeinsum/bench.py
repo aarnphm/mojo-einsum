@@ -32,11 +32,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import statistics
 import sys
+import sysconfig
 import time
 from datetime import UTC, datetime
+from pathlib import Path
+
+# Set the libpython link before `moeinsum` imports `_native` and triggers
+# the mohaus editable rebuild. uv-managed interpreters live outside the
+# loader's default search path, so the rebuild fails without this.
+if "MOJO_PYTHON_LIBRARY" not in os.environ:
+  _libdir = sysconfig.get_config_var("LIBDIR")
+  _libname = sysconfig.get_config_var("LDLIBRARY")
+  if _libdir and _libname:
+    _candidate = Path(_libdir) / _libname
+    if _candidate.is_file():
+      os.environ["MOJO_PYTHON_LIBRARY"] = str(_candidate)
 
 import numpy as np
 

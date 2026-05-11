@@ -20,7 +20,10 @@ keep the original dtype, route through TileTensor for zero-copy.
 
 from __future__ import annotations
 
-from typing import Protocol, TypeGuard
+from typing import TYPE_CHECKING, Protocol, TypeGuard
+
+if TYPE_CHECKING:
+  from typing_extensions import CapsuleType
 
 import numpy as np
 from numpy.typing import DTypeLike
@@ -29,7 +32,7 @@ _ZERO_COPY_DLPACK_SOURCES = ("torch", "jax", "mlx", "cupy", "tensorflow")
 
 
 class _DLPackSource(Protocol):
-  def __dlpack__(self, *, stream: object | None = None) -> object: ...
+  def __dlpack__(self, *, stream: None = None) -> CapsuleType: ...
 
   def __dlpack_device__(self) -> tuple[int, int]: ...
 
