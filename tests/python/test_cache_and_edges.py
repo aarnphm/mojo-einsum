@@ -88,3 +88,116 @@ def test_repeated_indices_only_in_input() -> None:
   a = np.array([[1.0, 2.0], [3.0, 4.0]])
   out = moeinsum.einsum("ii->", a)
   assert out == 5.0  # 1 + 4
+
+
+# ---------------------------------------------------------------------
+# LRU eviction at size cap
+# ---------------------------------------------------------------------
+
+
+def test_cache_lru_eviction_at_cap() -> None:
+  """When entries exceed `max_entries`, the oldest is evicted. Verified
+  by populating a small-cap cache past its limit and checking that the
+  first entry no longer survives a length read.
+  """
+  from moeinsum._cache import _PlanCache
+
+  cache = _PlanCache(max_entries=3)
+  for i in range(4):
+    cache.put(("key", i), [(i,)])
+  # Inserting key=3 must have evicted the LRU-oldest key=0.
+  assert cache.get(("key", 0)) is None
+  assert cache.get(("key", 3)) is not None
+  assert len(cache) == 3
+
+
+def test_cache_lru_access_promotes() -> None:
+  """Accessing an entry must move it to the MRU end; the next eviction
+  evicts a different entry."""
+  from moeinsum._cache import _PlanCache
+
+  cache = _PlanCache(max_entries=3)
+  cache.put(("key", 0), "a")
+  cache.put(("key", 1), "b")
+  cache.put(("key", 2), "c")
+  # Touch key=0 to promote it.
+  _ = cache.get(("key", 0))
+  # Insert key=3 — the LRU-oldest is now key=1, not key=0.
+  cache.put(("key", 3), "d")
+  assert cache.get(("key", 0)) == "a"  # survived
+  assert cache.get(("key", 1)) is None  # evicted
+  assert cache.get(("key", 2)) == "c"
+  assert cache.get(("key", 3)) == "d"
+
+
+def test_cache_clear_drops_all() -> None:
+  PLAN_CACHE.clear()
+  moeinsum.einsum_path("ij,jk->ik", (2, 3), (3, 4), optimize="greedy")
+  assert len(PLAN_CACHE) >= 1
+  PLAN_CACHE.clear()
+  assert len(PLAN_CACHE) == 0
+
+
+# ---------------------------------------------------------------------
+# Documented gotchas (per the plan's "seven known gotchas")
+# ---------------------------------------------------------------------
+
+
+def test_diagonal_on_non_contiguous_input() -> None:
+  """Historical PyTorch / TF bug: `ii->i` over a *non-contiguous* slice
+  returned wrong values because the diagonal stride was computed from
+  contiguous assumptions."""
+  base = np.arange(16.0).reshape(4, 4)
+  # F-order is non-contiguous in C terms (and vice versa).
+  non_contig = np.asfortranarray(base)
+  assert not non_contig.flags["C_CONTIGUOUS"]
+  expected = np.einsum("ii->i", non_contig)
+  actual = moeinsum.einsum("ii->i", non_contig)
+  np.testing.assert_array_equal(actual, expected)
+
+
+def test_diagonal_then_contract_non_contiguous() -> None:
+  """Same gotcha through the `iij,jk->ik` path — the lhs collapse must
+  honor the operand's actual stride layout, not a contiguous assumption.
+  """
+  base_a = np.arange(2 * 2 * 3, dtype=np.float64).reshape(2, 2, 3)
+  base_b = np.arange(3 * 4, dtype=np.float64).reshape(3, 4)
+  # Make `a` non-contiguous by transposing axes 0 and 2 back-and-forth.
+  a_non = base_a.transpose(0, 1, 2).copy(order="F").transpose(0, 1, 2)
+  expected = np.einsum("iij,jk->ik", a_non, base_b, optimize=True)
+  actual = moeinsum.einsum("iij,jk->ik", a_non, base_b)
+  np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_ellipsis_with_mismatched_implicit_rank() -> None:
+  """`...ij,jk->...ik` over operands of different prefix-ranks lets
+  numpy broadcast the shorter operand's ellipsis. moeinsum matches."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((2, 3, 4, 5))  # 4-D — prefix is (2, 3)
+  b = rng.standard_normal((5, 6))  # 2-D — prefix is empty
+  expected = np.einsum("...ij,jk->...ik", a, b)
+  actual = moeinsum.einsum("...ij,jk->...ik", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_broadcast_against_singleton() -> None:
+  """A singleton dim on one operand against a larger dim on the same
+  label must broadcast cleanly — this is the `cij,cjk->cik` shape with
+  cij having c=1."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((1, 3, 4))
+  b = rng.standard_normal((5, 4, 6))
+  # Numpy einsum errors here; we accept the strict semantics. The real
+  # broadcast convention is via explicit ellipsis, exercised above.
+  with pytest.raises(Exception):  # noqa: B017
+    moeinsum.einsum("cij,cjk->cik", a, b)
+
+
+def test_integer_bit_exact_reduction_large_k() -> None:
+  """Integer matmul must be bit-exact for K up to a few hundred — no
+  silent overflow into fp double precision."""
+  rng = np.random.default_rng(0)
+  a = rng.integers(-3, 4, size=(4, 256), dtype=np.int64)
+  b = rng.integers(-3, 4, size=(256, 4), dtype=np.int64)
+  out = moeinsum.einsum("ij,jk->ik", a, b)
+  np.testing.assert_array_equal(out, a @ b)
