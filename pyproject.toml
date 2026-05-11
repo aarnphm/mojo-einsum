@@ -1,0 +1,49 @@
+[build-system]
+requires = ["mohaus>=0.1,<0.2", "mojo==1.0.0b2.dev2026050805"]
+build-backend = "mohaus.backend"
+
+[project]
+name = "mojo-einsum"
+version = "0.1.0"
+description = "Mixed Python and Mojo package scaffolded by mohaus."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "your name", email = "you@example.com" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[tool.mohaus]
+module-name = "mojo_einsum._native"
+strip = true
+generate-stub = true
+mojo-flags = []
+mojo-include-paths = []
+
+[tool.ruff]
+extend-include = ["*.ipynb"]
+preview = true
+line-length = 119
+indent-width = 2
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = ["E111", "E114"]
+select = ["E", "F", "I", "UP", "B", "ANN"]
+
+[tool.ty.src]
+exclude = ["tests/**"]
+
+[tool.ty.rules]
+all = "error"
+
+[tool.uv.sources]
+mojo = { index = "modular-nightly" }
+
+[[tool.uv.index]]
+name = "modular-nightly"
+url = "https://whl.modular.com/nightly/simple/"
+explicit = true

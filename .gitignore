@@ -1,0 +1,14 @@
+/dist/
+/target/
+/vendor/
+/.venv/
+/.ruff_cache/
+/.pytest_cache/
+*.egg-info/
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.dll
+__mojocache__/
+.mohaus/
