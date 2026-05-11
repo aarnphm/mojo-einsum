@@ -155,4 +155,12 @@ def test_path_bellman_chain() -> None:
 
 def test_path_optimizer_known_invalid() -> None:
   with pytest.raises(ValueError, match="unknown optimize"):
-    moeinsum.einsum_path("ij,jk->ik", (2, 3), (3, 4), optimize="random-greedy-128")
+    moeinsum.einsum_path("ij,jk->ik", (2, 3), (3, 4), optimize="branch-2")
+
+
+def test_path_random_greedy_matches_optimal_on_bellman() -> None:
+  # random-greedy should at least match greedy on easy cases.
+  shapes = ((100, 1), (1, 100_000), (100_000, 1))
+  rg = moeinsum.einsum_path("ij,jk,kl->il", *shapes, optimize="random-greedy")
+  optimal = moeinsum.einsum_path("ij,jk,kl->il", *shapes, optimize="optimal")
+  assert rg == optimal

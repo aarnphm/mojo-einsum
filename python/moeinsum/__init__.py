@@ -56,7 +56,7 @@ __all__ = ["einsum", "einsum_path", "parse_equation", "PLAN_CACHE"]
 
 
 _BACKENDS = ("reference",)  # max lands in P5.
-_OPTIMIZE = ("naive", "greedy", "optimal", "auto")
+_OPTIMIZE = ("naive", "greedy", "optimal", "auto", "random-greedy")
 
 
 def parse_equation(eq: str) -> dict[str, object]:

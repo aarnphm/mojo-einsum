@@ -91,7 +91,3 @@ This is the moneyball table — given Mojo's unique leverage, where does it pay 
 **Halide-style schedule-language separation.** Adds developer surface area without a clear win for einsum specifically. Halide's schedules shine when the algorithm is hard to express; einsum's algorithm is a one-liner, so there's nothing to schedule against.
 
 **A new IR.** moeinsum's `ContractionPlan` is intentionally minimal — a list of B/K/M/N-classified pairwise steps plus permutations. It's not a graph IR. The full graph-level concerns (fusion, layout selection across ops) belong in MAX, which is why `max_graph` is a backend rather than the core.
-
----
-
-The honest summary: moeinsum is a fresh implementation built to learn from everyone else's choices. The math is the same; the kernels are the same; the algorithm catalog is the same. What's new is Mojo's compile-time leverage — used at the path layer (compile-time paths when shapes are alias) and the kernel layer (one source for CPU and GPU, specialization per dtype/rank signature). v0.1 establishes the architecture and proves correctness; v0.2 ships GETT and closes the irregular-contraction gap to cuTENSOR.

@@ -1,10 +1,18 @@
-# Derivations
+---
+title: Derivations
+date: 2025/05/10
+---
 
-Math and algorithm derivations for moeinsum. Builds on the vocabulary established in `notation.md` — the B/K/M/N taxonomy, the contraction-path concept, the ellipsis broadcasting rule. This document goes one level deeper: why the algorithms work, what their cost models actually measure, and where they're sharp.
+_see also [[notation|Notation]] for more information._
+
 
 ## 1. The BMM lowering
 
-The central claim of practical einsum implementation is: _any two-operand contraction reduces to a batched matrix-matrix multiply, after at most one permutation per operand_. This is what JAX's `_einsum` does (`lax_numpy.py:3264-3293`), what PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to under the hood. The derivation:
+> [!important]
+>
+> The central claim of practical einsum implementation is that _any two-operand contraction reduces to a batched matrix-matrix multiply, after at most one permutation per operand_. 
+> 
+> This is JAX's `einsum` implementation, PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to under the hood.
 
 Take a two-operand contraction `lhs,rhs->out` with labels classified into four sets (`notation.md`):
 

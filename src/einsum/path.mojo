@@ -428,6 +428,126 @@ def auto_path(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _path_total_flops(
+    eq: EinsumEquation,
+    label_sizes: List[Int],
+    steps: List[ContractionStep],
+) raises -> Int:
+    """Sum the FLOP cost of every step in `steps`.
+
+    Re-runs the working-set simulation so we can compute each step's
+    output labels and FLOP count from `label_sizes`.
+    """
+    var n = eq.n_operands()
+    var working = List[List[Int]]()
+    for i in range(n):
+        working.append(eq.inputs[i].copy())
+
+    var total: Int = 0
+    for k in range(len(steps)):
+        var li = steps[k].lhs_idx
+        var ri = steps[k].rhs_idx
+        var others = List[List[Int]]()
+        for j in range(len(working)):
+            if j != li and j != ri:
+                others.append(working[j].copy())
+        var out = _step_output_labels(working[li], working[ri], others, eq.output)
+        total += _flop_cost(working[li], working[ri], out, label_sizes)
+        var new_working = List[List[Int]]()
+        for j in range(len(working)):
+            if j != li and j != ri:
+                new_working.append(working[j].copy())
+        new_working.append(out^)
+        working = new_working^
+    return total
+
+
+def random_greedy_path(
+    eq: EinsumEquation,
+    label_sizes: List[Int],
+    var n_trials: Int = 32,
+    var seed: Int = 0,
+) raises -> List[ContractionStep]:
+    """N greedy trials with stochastic cost perturbation, return best.
+
+    At each step, we still pick the pair with the best `reduced_size`
+    but break ties by a hashed-pseudo-random tiebreaker derived from
+    `seed + trial * 1009 + step + lhs * 131 + rhs * 17`. After N
+    trials, return whichever path has the lowest *total* FLOP cost.
+
+    This is the working approximation of opt_einsum's random-greedy
+    (PR #78). The original uses Gumbel-noise-perturbed costs; a hashed
+    tiebreaker is the same shape at coarser resolution — good enough
+    to escape the deterministic-greedy traps for typical n ≤ 30
+    contractions.
+    """
+    if n_trials < 1:
+        n_trials = 1
+    var n = eq.n_operands()
+    if n < 2:
+        return List[ContractionStep]()
+
+    var best_total: Int = 9223372036854775807
+    var best_path = List[ContractionStep]()
+
+    for trial in range(n_trials):
+        var trial_seed = seed + trial * 1009
+        var working = List[List[Int]]()
+        for i in range(n):
+            working.append(eq.inputs[i].copy())
+        var steps = List[ContractionStep]()
+        var step_idx: Int = 0
+
+        while len(working) >= 2:
+            var best_i: Int = -1
+            var best_j: Int = -1
+            var best_score: Int = -9223372036854775807
+            var best_flops: Int = 9223372036854775807
+            var best_jitter: Int = -1
+            var best_out = List[Int]()
+
+            for i in range(len(working)):
+                for j in range(i + 1, len(working)):
+                    var others = List[List[Int]]()
+                    for k in range(len(working)):
+                        if k != i and k != j:
+                            others.append(working[k].copy())
+                    var out = _step_output_labels(working[i], working[j], others, eq.output)
+                    var score = _reduced_size_cost(working[i], working[j], out, label_sizes)
+                    var flops = _flop_cost(working[i], working[j], out, label_sizes)
+                    var jitter = (trial_seed + step_idx + i * 131 + j * 17) & 0xFFFF
+                    var better = False
+                    if score > best_score:
+                        better = True
+                    elif score == best_score and flops < best_flops:
+                        better = True
+                    elif score == best_score and flops == best_flops and jitter > best_jitter:
+                        better = True
+                    if better:
+                        best_i = i
+                        best_j = j
+                        best_score = score
+                        best_flops = flops
+                        best_jitter = jitter
+                        best_out = out^
+
+            steps.append(ContractionStep(best_i, best_j))
+            var new_working = List[List[Int]]()
+            for k in range(len(working)):
+                if k != best_i and k != best_j:
+                    new_working.append(working[k].copy())
+            new_working.append(best_out^)
+            working = new_working^
+            step_idx += 1
+
+        var total = _path_total_flops(eq, label_sizes, steps)
+        if total < best_total:
+            best_total = total
+            best_path = steps^
+
+    return best_path^
+
+
 def compute_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
@@ -435,8 +555,8 @@ def compute_path(
 ) raises -> List[ContractionStep]:
     """Dispatch to the named algorithm.
 
-    `algorithm ∈ {"greedy", "optimal", "auto", "naive"}`. "naive" is
-    deterministic left-to-right pairing, useful as a baseline.
+    `algorithm ∈ {"greedy", "optimal", "auto", "naive", "random-greedy"}`.
+    "naive" is deterministic left-to-right pairing, useful as a baseline.
     """
     if algorithm == String("greedy"):
         return greedy_path(eq, label_sizes)
@@ -446,11 +566,13 @@ def compute_path(
         return auto_path(eq, label_sizes)
     if algorithm == String("naive"):
         return naive_path(eq)
+    if algorithm == String("random-greedy"):
+        return random_greedy_path(eq, label_sizes)
     raise Error(
         String(
             "compute_path: unknown algorithm '",
             algorithm,
-            "'. Supported: greedy, optimal, auto, naive.",
+            "'. Supported: greedy, optimal, auto, naive, random-greedy.",
         )
     )
 
