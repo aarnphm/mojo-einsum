@@ -240,3 +240,64 @@ def test_accum_dtype_none_default() -> None:
   b = np.eye(3)
   out = moeinsum.einsum("ij,jk->ik", a, b, accum_dtype=None)
   np.testing.assert_allclose(out, a @ b)
+
+
+# ---------------------------------------------------------------------
+# Cache thread-safety — RLock contention under concurrent.futures
+# ---------------------------------------------------------------------
+
+
+def test_cache_concurrent_get_put_safe() -> None:
+  """Hammer the cache from many threads simultaneously. The RLock in
+  `_PlanCache.{get,put}` must serialize without deadlocks or losing
+  entries. Test runs 8 threads × 32 iterations each, alternating
+  put/get on overlapping keys."""
+  import threading
+  from concurrent.futures import ThreadPoolExecutor, as_completed
+
+  from moeinsum._cache import _PlanCache
+
+  cache = _PlanCache(max_entries=64)
+  errors: list[Exception] = []
+  lock = threading.Lock()
+
+  def hammer(worker_id: int) -> None:
+    try:
+      for i in range(32):
+        key = ("hot", i % 16)
+        cache.put(key, (worker_id, i))
+        val = cache.get(key)
+        if val is None:
+          # Possible only if eviction beat us — max_entries=64 with
+          # 16 distinct hot keys means it shouldn't happen.
+          raise AssertionError(f"cache lost key {key!r}")
+    except Exception as exc:  # noqa: BLE001
+      with lock:
+        errors.append(exc)
+
+  with ThreadPoolExecutor(max_workers=8) as ex:
+    futures = [ex.submit(hammer, w) for w in range(8)]
+    for f in as_completed(futures):
+      f.result()
+
+  assert not errors, f"thread-safety violations: {errors[:3]}"
+
+
+def test_cache_concurrent_einsum_path_consistent() -> None:
+  """End-to-end: multiple threads call `einsum_path` on overlapping
+  shapes. Each result must be self-consistent (every thread for the
+  same input sees the same path)."""
+  from concurrent.futures import ThreadPoolExecutor
+
+  PLAN_CACHE.clear()
+  eq = "ij,jk,kl->il"
+  shapes = ((3, 4), (4, 5), (5, 6))
+
+  def call() -> tuple[tuple[int, ...], ...]:
+    return tuple(moeinsum.einsum_path(eq, *shapes, optimize="optimal"))
+
+  with ThreadPoolExecutor(max_workers=8) as ex:
+    results = list(ex.map(lambda _: call(), range(32)))
+
+  # All 32 results must be identical.
+  assert len(set(results)) == 1, f"divergent paths under concurrency: {set(results)}"

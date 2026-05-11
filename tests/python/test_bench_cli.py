@@ -1,0 +1,182 @@
+"""Bench CLI subprocess + JSON-schema tests.
+
+Runs the `moeinsum-bench` entry point as a subprocess and validates
+the JSON output shape. Catches schema drift that integration tests
+inside the same process miss (e.g. broken `argparse` choices, broken
+script entry, broken JSON dump).
+
+Two invocation paths are validated:
+  - `python -m moeinsum.bench …`
+  - `moeinsum-bench …` (the `[project.scripts]` entry installed by
+    `pip install -e .`)
+
+These tests do real subprocess work and add ~3-5s to the suite. If
+runtime matters, gate them with `-k 'not bench_cli'`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+def _python() -> str:
+  return sys.executable
+
+
+def _bench_args(equation: str, shapes: list[str], **extra: object) -> list[str]:
+  out = [equation, "--shapes", *shapes, "--repeats", "3", "--warmup", "1"]
+  for k, v in extra.items():
+    flag = "--" + k.replace("_", "-")
+    if isinstance(v, bool):
+      if v:
+        out.append(flag)
+    else:
+      out.extend([flag, str(v)])
+  return out
+
+
+def _run(*argv: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
+  env = os.environ.copy()
+  # Carry DYLD_LIBRARY_PATH through — conftest.py sets it but only at
+  # pytest import time; subprocess starts fresh.
+  for path in (
+    "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_UKGEN",
+    "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_UMLRT",
+    "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_USupport",
+  ):
+    if Path(path).is_dir():
+      existing = env.get("DYLD_LIBRARY_PATH", "")
+      env["DYLD_LIBRARY_PATH"] = f"{path}:{existing}" if existing else path
+  return subprocess.run(
+    list(argv),
+    capture_output=True,
+    text=True,
+    timeout=timeout,
+    env=env,
+    check=False,
+  )
+
+
+def _parse_json(stdout: str) -> dict[str, object]:
+  return json.loads(stdout)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# `python -m moeinsum.bench` entry
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_module_entry_single_optimizer() -> None:
+  args = _bench_args("ij,jk->ik", ["3,4", "4,5"])
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  for key in (
+    "equation",
+    "shapes",
+    "backend",
+    "optimize",
+    "dtype",
+    "repeats",
+    "warmup",
+    "total_ms_median",
+    "total_ms_min",
+    "total_ms_max",
+    "platform",
+    "timestamp",
+  ):
+    assert key in rec, f"missing schema key {key!r}"
+  assert rec["equation"] == "ij,jk->ik"
+  assert rec["shapes"] == [[3, 4], [4, 5]]
+  assert rec["backend"] == "reference"
+  assert isinstance(rec["total_ms_median"], (int, float))
+  assert rec["total_ms_median"] > 0
+
+
+def test_module_entry_with_include_path() -> None:
+  args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], include_path=True)
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0
+  rec = _parse_json(proc.stdout)
+  assert "path" in rec
+  # 3 operands → 2 pairwise steps.
+  assert len(rec["path"]) == 2
+
+
+def test_module_entry_sweep_optimizers() -> None:
+  args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], sweep_optimizers=True)
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0
+  rec = _parse_json(proc.stdout)
+  assert "results" in rec
+  assert "fastest" in rec
+  assert "ratios" in rec
+  # Every standard optimizer must have run.
+  for opt in ("naive", "greedy", "optimal", "auto", "random-greedy"):
+    assert opt in rec["results"]
+    assert rec["ratios"][opt] >= 1.0  # fastest has ratio == 1.0
+
+
+def test_module_entry_vs_numpy() -> None:
+  args = _bench_args("ij,jk->ik", ["8,8", "8,8"], vs_numpy=True)
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0
+  rec = _parse_json(proc.stdout)
+  for key in ("numpy_ms_median", "numpy_ms_min", "numpy_ms_max", "vs_numpy_ratio"):
+    assert key in rec
+  assert rec["vs_numpy_ratio"] > 0
+
+
+def test_module_entry_random_greedy_n() -> None:
+  args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], optimize="random-greedy-16")
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0
+  rec = _parse_json(proc.stdout)
+  assert rec["optimize"] == "random-greedy-16"
+
+
+def test_module_entry_explicit_path_rejected_via_cli() -> None:
+  """The CLI's `--optimize` takes a string, so explicit-path callers
+  must use the Python API. Verify the CLI rejects an obvious
+  attempt with an unknown-optimize error."""
+  args = _bench_args("ij,jk->ik", ["3,4", "4,5"], optimize="[(0,1)]")
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode != 0
+  assert "unknown optimize" in proc.stderr or "Traceback" in proc.stderr
+
+
+def test_module_entry_invalid_equation() -> None:
+  args = _bench_args("i$j,jk->ik", ["3,4", "4,5"])
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode != 0
+
+
+# ─────────────────────────────────────────────────────────────────────
+# `moeinsum-bench` script entry (from [project.scripts])
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(
+  shutil.which("moeinsum-bench") is None
+  and not (Path(_python()).parent / "moeinsum-bench").is_file(),
+  reason="moeinsum-bench console script not on PATH",
+)
+def test_console_script_entry() -> None:
+  """The `[project.scripts] moeinsum-bench = "moeinsum.bench:main"`
+  entry must produce the same JSON shape as `python -m`."""
+  script = shutil.which("moeinsum-bench") or str(
+    Path(_python()).parent / "moeinsum-bench"
+  )
+  args = _bench_args("ij,jk->ik", ["3,4", "4,5"])
+  proc = _run(script, *args)
+  assert proc.returncode == 0
+  rec = _parse_json(proc.stdout)
+  assert rec["equation"] == "ij,jk->ik"
+  assert rec["total_ms_median"] > 0
