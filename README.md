@@ -33,7 +33,7 @@ to force.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `moeinsum-bench` script (installed by `pip install -e .`), JSON output.
-- **Tests**: 289 numpy-parity / parser / path / branch / explicit-path / cache / interop / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
+- **Tests**: 416 numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
 
 ## Docs
 
