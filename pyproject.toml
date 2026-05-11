@@ -18,6 +18,9 @@ classifiers = [
 ]
 dependencies = ["numpy>=1.26"]
 
+[project.scripts]
+moeinsum-bench = "moeinsum.bench:main"
+
 [project.optional-dependencies]
 max = ["max"]
 torch = ["torch>=2.4"]
@@ -32,6 +35,9 @@ dev = [
   "ty",
   "ipython",
 ]
+
+[dependency-groups]
+bench = ["tqdm"]
 
 [tool.mohaus]
 module-name = "moeinsum._native"
