@@ -54,7 +54,7 @@ _BACKENDS = ("reference",)
 # opaque "unknown backend" string when callers try them.
 _PLANNED_BACKENDS = {
   "max": "P5 — needs the FFI to plumb TileTensor handles. "
-  "Skeleton at src/einsum/backends/max.mojo. See docs/ffi-p5.md.",
+  "Skeleton at src/einsum/backends/max.mojo. See docs/ffi.md.",
   "native": "P11/P12 — SIMD-tiled CPU GETT + SM90 WGMMA. "
   "Skeleton at src/einsum/backends/native.mojo.",
   "max_graph": "P14 — Python-side plan-to-graph translation shipped; "

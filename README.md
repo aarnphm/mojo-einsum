@@ -29,7 +29,7 @@ assert np.allclose(c, a @ b)
 - [`docs/derivations.md`](docs/derivations.md) — BMM lowering math, contraction-tree cost models, GETT, √K accumulation rule.
 - [`docs/perf.md`](docs/perf.md) — tuning guide, backend selection, profile triage.
 - [`docs/comparisons.md`](docs/comparisons.md) — scorecard vs NumPy / PyTorch / JAX / cuTENSOR / TBLIS.
-- [`docs/ffi-p5.md`](docs/ffi-p5.md) — design-spike for the MaxBackend FFI cutover.
+- [`docs/ffi.md`](docs/ffi.md) — FFI cutover design-spike for P5/P10/P11/P12.
 
 ## Install
 
@@ -49,7 +49,7 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P2    | ✅     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                     |
 | P3    | ✅     | Unary kernels (transpose / diagonal / sum / trace)                                         |
 | P4    | ✅     | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family             |
-| P5    | ⏳     | `MaxBackend` dispatching to `linalg.batched_matmul` — design-spike in `docs/ffi-p5.md`     |
+| P5    | ⏳     | `MaxBackend` dispatching to `linalg.batched_matmul` — design-spike in `docs/ffi.md`        |
 | P6    | ✅     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred     |
 | P7    | ✅     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                               |
 | P8    | ✅     | DLPack interop: dtype-preserving in/out, framework-native return (torch in → torch out)    |
@@ -59,7 +59,7 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P12   | 🛠     | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                          |
 | P13   | ✅     | Benchmark CLI (`moeinsum-bench` script)                                                    |
 | P14   | 🛠     | `MaxGraphBackend`: plan-to-graph translation shipped; `max.graph.ops` codegen pending      |
-| P15   | ✅     | Docs (notation / derivations / perf / comparisons / ffi-p5), editor-reviewed               |
+| P15   | ✅     | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                  |
 
 ✅ shipped · ✅\* shipped first pass (real polish deferred to P5) · 🛠 skeleton landed, full impl pending · ⏳ pending.
 

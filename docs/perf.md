@@ -3,51 +3,34 @@ title: Performance tuning
 date: 2025/05/10
 ---
 
-This page is the user-facing companion to [[derivations]]. We will go into which backend to pick, which `optimize=` setting, which accumulator dtype, and expectation when you see degradation.
+_See [[derivations]] for why the rules below hold. This page is the rules._
 
-## backens
+## backends
 
-moeinsum ships four backends; the default `max` is right for almost everything.
+moeinsum ships four. `max` is the default and the right answer almost always.
 
-**`reference`**—naive nested loop, fp64 internally. Use it for:
+**`reference`** — naive nested loop, fp64 internally. Bit-equivalent to numpy by construction, so use it as the oracle when a result diverges. Also the right choice for tensor totals under ~10⁴ elements, where BMM launch overhead dominates the actual work. It scales O(product-of-all-label-sizes); past ~10⁴ it falls off a cliff.
 
-- Correctness debugging. If a result differs from numpy, run with `backend="reference"` first; that result is bit-equivalent to numpy at fp64 by construction.
-- Tiny inputs ($\le 100$ elements). The reference loop has no overhead; the BMM-lowered path has constant launch cost.
-- Education/single-stepping. The reference walks every label index explicitly, so it's trivial to read.
+**`max`** — lowers each pairwise step to `linalg.batched_matmul`. This is the drop-in for `numpy.einsum` / `torch.einsum` / `jax.numpy.einsum`. The matmul dispatcher handles platform selection: vDSP/AMX on Apple, BLIS-style packed AVX-512 on Intel/AMD, NEON on ARM, WGMMA on Hopper, MFMA on AMD CDNA. With `target="gpu"` and a valid `DeviceContext` you get tensor-core kernels for free.
 
-Never use `reference` for anything bigger than ~10000 total elements. It scales O(product-of-all-label-sizes).
+**`native`** — GETT-style kernels. Switch to this when the contraction has a heavy permute that `max` would materialize — concretely, contracted dims non-adjacent and accounting for ≥30% of work — or when you need fp16/bf16/fp8 micro-control so the accumulator-precision choice flows into the WGMMA/MFMA opcode.
 
-**`max`**—lowers each pairwise step to `linalg.batched_matmul`. Use it for:
+**`max_graph`** — builds a MAX graph from the contraction plan and hands it to the MAX compiler. Use when you have several einsums in sequence with elementwise ops between them; whole-graph fusion collapses the lot into one megakernel, which beats BMM-lowering when graph-construction latency amortizes over many calls.
 
-- Everything you'd normally use `numpy.einsum`, `torch.einsum`, or `jax.numpy.einsum` for, some 1-to-1 replacement
-- CPU (Apple Silicon, AVX-512) — the matmul dispatcher handles platform selection. You get vDSP/AMX on Mac, BLIS-style packed AVX-512 on Intel/AMD, NEON on ARM.
-- GPU (SM90, SM100, AMD CDNA) — with `target="gpu"` and a valid `DeviceContext`, the same dispatcher routes to tensor-core kernels. WGMMA on Hopper, MFMA on AMD.
+## which `optimize=` algorithm
 
-**`native`**—our own GETT-style kernels. Use when:
-
-- The contraction has a heavy permute that `max` would materialize.
-  - A good heuristic includes any contraction where the contracted dims aren't naturally adjacent and they account for $\ge 30$% of total work.
-- You need fp16/bf16/fp8 micro-control. The `native` path lets the accumulator-precision choice flow into the WGMMA/MFMA opcode selection.
-
-**`max_graph`**—builds a MAX graph from the contraction plan and hands it to the MAX compiler. Use when:
-
-- You have multiple einsums in sequence with elementwise ops between them. MAX's whole-graph fusion can collapse all of that into one megakernel. This is usually more useful than lowering BMM.
-- Latency cost of MAX graph construction is amortized over many calls.
-
-## Which `optimize=` algorithm
-
-This is the path-optimizer choice, separate from the backend. opt_einsum's algorithm family ships in `path.mojo`:
+The path optimizer is orthogonal to the backend. The algorithm family in `path.mojo`:
 
 | Algorithm | When to use                                                            | Cost                              |
 | --------- | ---------------------------------------------------------------------- | --------------------------------- |
 | `naive`   | Operand order is hand-tuned; you know better than the planner.         | 0                                 |
 | `greedy`  | Default for n > 4 operands. Near-optimal for ML-shaped contractions.   | O(n³) planning                    |
 | `optimal` | Default for n ≤ 4 (this is what `auto` picks). Truly optimal in FLOPs. | O(3ⁿ) planning, tractable to n=16 |
-| `auto`    | Automatic threshold dispatch. Default for the public API.              | Per-n table above                 |
+| `auto`    | Threshold dispatch over the rows above. Default for the public API.    | Per-n as above                    |
 
-For $n \le 4$, the planning cost is negligible — always use `optimal` or `auto`. For n in the 5–16 range, `optimal` adds noticeable overhead (milliseconds to seconds at n=16), but if the einsum will be called repeatedly, the JIT cache amortizes it to zero across calls.
+For n ≤ 4 the planning cost is negligible — always `optimal` or `auto`. For n in 5–16, `optimal` adds milliseconds to seconds of overhead at n=16, but the JIT cache amortizes it to zero across repeated calls.
 
-For n > 16: I only implement `greedy` for now. If you have a real tensor-network workload with n > 30 (quantum simulation, lattice contractions), use `cotengra` directly via Python to compute the path, then pass it explicitly:
+For n > 16 I only implement `greedy`. Real tensor-network workloads with n > 30 (quantum simulation, lattice contractions) should use `cotengra` directly and pass the result back:
 
 ```python
 import cotengra as ctg
@@ -55,11 +38,11 @@ path = ctg.array_contract_path(eq, *shapes, optimize=ctg.HyperOptimizer())
 result = moeinsum.einsum(eq, *arrays, optimize=path)
 ```
 
-(The explicit-path API lands with P4 polish; for v0.1 you can call `einsum_path` yourself and pass the result.)
+The explicit-path API lands with P4 polish; before that, call `einsum_path` yourself and pass the result.
 
-## Accumulator DType
+## accumulator dtype
 
-inputs cast up to `accum_dtype` for the accumulation, result cast back to `result_dtype`. The default `accum_dtype` is the larger of fp32 and the input dtype.
+Inputs cast up to `accum_dtype` for the reduction, result casts back to `result_dtype`. The default `accum_dtype` is `max(fp32, input_dtype)`.
 
 | Input dtype | Default `accum_dtype` | When to override                                                                                          |
 | ----------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -68,17 +51,17 @@ inputs cast up to `accum_dtype` for the accumulation, result cast back to `resul
 | fp64        | fp64                  | n/a                                                                                                       |
 | int\*       | int64                 | If you can guarantee no overflow, int32 saves bandwidth.                                                  |
 
-The [[derivations#4. Low-precision accumulation|derivation 4]] shows the $\sqrt{K}$ error growth concretely. The headline number: bf16 accumulator at K=4096 has ~50% relative error. fp32 accumulator at K=4096 has ~10⁻⁵ error. The fp32 accumulator costs 2× bandwidth at the input but is a non-negotiable correctness requirement.
+[[derivations#4. Low-precision accumulation|Derivation 4]] shows the √K growth concretely. The headline ratio: bf16 accumulator at K=4096 has ~50% relative error against fp32's ~10⁻⁵ — five orders of magnitude apart, for a 2× input-bandwidth saving you do not want. fp32 accumulation is not negotiable.
 
-## Deterministic reductions
+## deterministic reductions
 
-`linalg.batched_matmul` parallelizes the K-loop across threads / blocks; the order of summation is non-deterministic. For most numerical workloads this is fine — the error is at the unit roundoff level. For some (regression testing, audit trails, reproducibility-required research) it matters.
+`linalg.batched_matmul` parallelizes the K-loop across threads and blocks; summation order is non-deterministic. The error is at the unit-roundoff level — fine for almost everything, fatal for regression-testing, audit trails, or anything published as reproducible.
 
-moeinsum exposes a `deterministic=True` flag that forces serial K-summation. Costs about 30% throughput on CPU, can be 5–10× slower on GPU (you serialize the BMM). Use only when needed.
+Pass `deterministic=True` to force serial K-summation. Cost: ~30% throughput on CPU; 5–10× slower on GPU, where you're serializing what the BMM was parallelizing. Use only when the auditor asks for it.
 
-## Profiling
+## profiling
 
-Before tuning anything, profile. A `moeinsum-bench` CLI ships in P13 and emits per-step timing as JSON:
+Before tuning anything, profile. `moeinsum-bench` (P13) emits per-step timing as JSON:
 
 ```bash
 moeinsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max --target cpu
@@ -99,26 +82,26 @@ moeinsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max --target cp
 }
 ```
 
-The per-step `gflops` tells you whether the matmul kernel is hot. If it's <50% of your platform's peak, the bottleneck is probably permute / packing, not the BMM — switch to `native` (when shipped) or restructure the equation to reduce permute cost.
+The per-step `gflops` is the diagnostic. Below 50% of platform peak, the bottleneck is permute/packing rather than the matmul — switch to `native` or restructure the equation to reduce permute cost.
 
-## Cross-platform notes
+## cross-platform notes
 
-**Apple Silicon (M-series)**: AMX coprocessor handles small-batch matmul efficiently through Accelerate's `cblas_*` calls. Best performance comes from fp32 inputs (AMX has native support); fp16 requires a software fp16→fp32 expansion that costs about 2×. bf16 is unsupported on AMX directly — Accelerate falls back to vDSP fp32. For inference workloads, fp32 is usually the right choice on M-series.
+**Apple Silicon (M-series)** — AMX handles small-batch matmul via Accelerate's `cblas_*`. AMX has native fp32; fp16 pays a ~2× tax for software fp32 expansion; bf16 falls back to vDSP fp32 (AMX has no bf16). Run fp32 inputs on M-series unless you have a specific reason not to.
 
-**NVIDIA Hopper (H100, H200)**: WGMMA + TMA are the inner kernel. The `linalg.batched_matmul` GPU path uses `warp_specialize_gemm_with_multicasting`. Peak fp16/bf16 throughput requires `M ≥ 64`, `N ≥ 128`, `K` a multiple of 16. Smaller contractions hit the small-matrix slow path. If your einsum lowers to such a shape, consider whether the path optimizer is choosing a suboptimal intermediate — sometimes a different `optimize=` setting produces a better-shaped intermediate.
+**NVIDIA Hopper (H100, H200)** — WGMMA + TMA, dispatched via `warp_specialize_gemm_with_multicasting`. Peak fp16/bf16 needs `M ≥ 64`, `N ≥ 128`, `K` a multiple of 16. Below that you hit the small-matrix slow path. When you do, the fix is usually upstream: the planner picked an intermediate with a small free dim. Try a different `optimize=` and inspect the path.
 
-**NVIDIA Blackwell (B100, B200)**: TCGEN05 + UMMA. Similar story to Hopper but with stricter alignment requirements. moeinsum's `max` backend handles this transparently when `target="gpu"`.
+**NVIDIA Blackwell (B100, B200)** — TCGEN05 + UMMA. Same shape rules as Hopper but with stricter alignment. `max` with `target="gpu"` handles it transparently.
 
-**AMD MI300X**: MFMA tensor cores via Composable Kernel. Peak fp16 requires `M, N` multiples of 32 (vs 64 on Hopper). The matmul dispatcher knows this. For odd shapes, performance suffers more than on NVIDIA — AMD's mixed-shape kernels are less mature.
+**AMD MI300X** — MFMA via Composable Kernel. Peak fp16 needs `M, N` multiples of 32 (vs 64 on Hopper). Odd shapes cost more than they do on NVIDIA; CK's mixed-shape kernels are less mature.
 
-## When `max` is slow
+## when `max` is slow
 
-Three diagnostic questions:
+Three diagnostics, in order:
 
-1. **Is it the BMM or the permute?** Profile per-step. If the gflops number on the BMM step is reasonable (>50% peak) but total time is dominated by something else, the something else is the permute — `native`/GETT will help.
-2. **Is the K dim tiny?** BMM kernels assume K ≥ 16 or so for tensor-core throughput. If your equation has K=4 or K=8, you're hitting a slow path. Often the fix is to reshape: combine multiple K-dims into one fatter K, or use the `cublas_compute_32f_fast_16f` (or platform equivalent) variant.
-3. **Are you allocating intermediates in the inner loop?** Each pairwise step in the multi-operand case allocates a fresh intermediate buffer. The `ContractionContext` arena (P6) sizes a single buffer to the peak intermediate up front. If you're in a hot loop, manually reusing context across calls (when the API exposes this in P7+) saves the allocation.
+1. **BMM or permute?** Per-step gflops > 50% peak but total time dominated by something else means the something else is the permute. `native`/GETT will help.
+2. **Is K tiny?** Tensor-core BMM assumes K ≥ 16. K=4 or K=8 hits a slow path. Fix upstream by combining multiple K-dims into one fatter K, or use the `cublas_compute_32f_fast_16f` (or platform equivalent) variant.
+3. **Allocating intermediates in the hot loop?** Each pairwise step allocates a fresh buffer. The `ContractionContext` arena (P6) sizes a single buffer to the peak intermediate up front; reusing the context across calls (when P7+ exposes it) eliminates the allocation entirely.
 
-## Comparisons
+## comparisons
 
-For the long-form comparison table — feature parity, perf in canonical contractions, install / dep complexity — see `comparisons.md`. Headline: `max` matches PyTorch / JAX / NumPy on ML-shaped contractions, beats them on call-site overhead (via the JIT cache, P7), and loses to cuTENSOR for the moment on irregular shapes that need GETT.
+Long-form table — feature parity, perf on canonical contractions, install / dep complexity — lives in `comparisons.md`. Headline: `max` matches PyTorch / JAX / NumPy on ML-shaped contractions, beats them on call-site overhead via the JIT cache (P7), and loses to cuTENSOR on irregular shapes that need GETT.
