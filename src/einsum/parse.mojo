@@ -29,7 +29,7 @@ Not handled here (in `plan.mojo`):
   - broadcasting with size-1 dims.
 """
 
-# `String`, `StringSlice`, `List`, `chr`, `ord` are in the Mojo prelude — no
+# `String`, `StringSlice`, `List`, `chr`, `ord` are in the Mojo prelude - no
 # imports needed for Mojo 1.0.0b1+.
 
 
@@ -298,7 +298,7 @@ def expand_ellipsis(
                     w,
                     " != max ",
                     max_width,
-                    " — broadcast across mismatched ellipsis-rank not yet supported",
+                    " - broadcast across mismatched ellipsis-rank not yet supported",
                 )
             )
         var out = List[Int]()

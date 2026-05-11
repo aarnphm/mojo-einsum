@@ -4,7 +4,7 @@ Given an einsum equation, operand shapes, and a contraction path, compute
 the per-step FLOP cost and the peak intermediate tensor size. Useful for
 debugging why one `optimize=` setting beats another.
 
-Stays Python-side — duplicates the cost math from `path.mojo`'s
+Stays Python-side - duplicates the cost math from `path.mojo`'s
 `_flop_cost` / `_reduced_size_cost` so users can compute costs without
 crossing the FFI boundary.
 """
@@ -30,7 +30,7 @@ def _intern_labels(eq: str) -> tuple[list[list[int]], list[int]]:
   lists + output label-int list.
 
   We can't call moeinsum.parse_equation here because that'd create a
-  circular import; this is a deliberate duplicate. ASCII-only — matches
+  circular import; this is a deliberate duplicate. ASCII-only - matches
   what the Mojo parser handles.
   """
   if "->" in eq:
@@ -114,7 +114,7 @@ def path_cost(
 
   for step in path:
     if len(step) == 1:
-      # Unary step — collapse repeated labels then drop reduce-out labels.
+      # Unary step - collapse repeated labels then drop reduce-out labels.
       idx = step[0]
       labels = working[idx]
       # Survive only labels needed downstream.

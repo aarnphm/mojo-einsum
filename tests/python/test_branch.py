@@ -5,10 +5,10 @@ over the contraction tree, FLOP-pruned by an initial greedy seed.
 
   - `branch-1` collapses to greedy by construction (top-1 candidate at
     every level == what greedy picks).
-  - `branch-2` keeps the top-2 candidates per level — finds non-greedy
+  - `branch-2` keeps the top-2 candidates per level - finds non-greedy
     paths when they're nearby in the candidate ranking.
-  - `branch-all` is the exhaustive DFS — guaranteed ≤ greedy FLOPs (and
-    typically == optimal for n ≤ 6).
+  - `branch-all` is the exhaustive DFS - guaranteed <= greedy FLOPs (and
+    typically == optimal for n <= 6).
 
 The greedy seed gives us "no worse than greedy" for free; we test that
 invariant across a small zoo of contractions, plus a few hand-known
@@ -45,9 +45,9 @@ def test_branch_1_equals_greedy() -> None:
 
 
 def test_branch_all_no_worse_than_greedy_on_zoo() -> None:
-  """Across 4–6 operand zoo, branch-all's total FLOPs must ≤ greedy.
+  """Across 4-6 operand zoo, branch-all's total FLOPs must <= greedy.
 
-  The greedy seed gives this for free — branch's pruning bound starts
+  The greedy seed gives this for free - branch's pruning bound starts
   at greedy's total cost, so any complete path branch returns is
   weakly better. This is a regression check for that property."""
   cases = [
@@ -85,7 +85,7 @@ def test_branch_in_auto_threshold_n7() -> None:
 
 
 def test_branch_on_two_operands_is_trivial() -> None:
-  """With n=2 there's only one pair — branch trivially returns it."""
+  """With n=2 there's only one pair - branch trivially returns it."""
   for algo in ("branch-all", "branch-2", "branch-1"):
     path = moeinsum.einsum_path("ij,jk->ik", (3, 4), (4, 5), optimize=algo)
     assert path == [(0, 1)], f"{algo} on 2 operands: {path}"

@@ -15,10 +15,10 @@ P1 uses a left-to-right `naive_path`; `greedy` / `optimal` are P4 work.
 Dim role taxonomy (B/K/M/N), mirroring JAX's `_einsum` algorithm at
 `jax/_src/numpy/lax_numpy.py:3264-3293`:
 
-  B  batch     — present in lhs, rhs, and output of this step
-  K  contract  — present in lhs and rhs, summed out
-  M  free-left — present in lhs and step output, not in rhs
-  N  free-rt   — present in rhs and step output, not in lhs
+  B  batch     - present in lhs, rhs, and output of this step
+  K  contract  - present in lhs and rhs, summed out
+  M  free-left - present in lhs and step output, not in rhs
+  N  free-rt   - present in rhs and step output, not in lhs
 """
 
 from std.utils import Variant
@@ -57,8 +57,8 @@ struct PairwiseStep(Copyable, Movable):
     """A two-operand step.
 
     All position lists are indices into the operand's current label
-    sequence. The natural BMM-lowering target is `(*B, *M, *K) ×
-    (*B, *K, *N) → (*B, *M, *N)`; `out_permutation` then reorders the
+    sequence. The natural BMM-lowering target is `(*B, *M, *K) x
+    (*B, *K, *N) -> (*B, *M, *N)`; `out_permutation` then reorders the
     BMM-output axes to `out_labels`.
     """
     var lhs_idx: Int
@@ -75,7 +75,7 @@ struct PairwiseStep(Copyable, Movable):
     var out_permutation: List[Int]
 
 
-# Tagged-union via `Variant` — the stdlib idiom.
+# Tagged-union via `Variant` - the stdlib idiom.
 comptime PlanStep = Variant[UnaryStep, PairwiseStep]
 
 
@@ -119,8 +119,8 @@ def classify_pair(
     """Build the B/K/M/N classification for one pairwise step.
 
     Mirrors JAX `_einsum` at `lax_numpy.py:3264-3293`:
-      - batch: in lhs ∩ rhs ∩ out
-      - contract: in lhs ∩ rhs, not in out
+      - batch: in lhs cap rhs cap out
+      - contract: in lhs cap rhs, not in out
       - free-left (M): in lhs, in out, not in rhs
       - free-right (N): in rhs, in out, not in lhs
     """
@@ -305,8 +305,8 @@ def build_unary_step(
 def build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
     """Build a plan that contracts operands left-to-right.
 
-    For each operand `i ≥ 1`, the step output carries labels in
-    (accumulator ∪ operand_i) still needed downstream — either in
+    For each operand `i >= 1`, the step output carries labels in
+    (accumulator cup operand_i) still needed downstream - either in
     `eq.output` or in any later operand.
     """
     var steps = List[PlanStep]()

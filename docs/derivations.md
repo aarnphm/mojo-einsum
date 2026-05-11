@@ -15,10 +15,10 @@ This is what JAX's `einsum` does, what PyTorch's `sumproduct_pair` does (`aten/s
 
 Take a two-operand contraction `lhs,rhs->out` with labels classified into [[notation#four sets]]:
 
-- B—batch (in $\text{lhs} \cap \text{rhs} \cap \text{out}$)
-- M—free-left (in $\text{lhs} \cap \text{out}$)
-- N—free-right (in $\text{rhs} \cap \text{out}$)
-- K—contract (in $\text{lhs} \cap \text{rhs}$)
+- B - batch (in $\text{lhs} \cap \text{rhs} \cap \text{out}$)
+- M - free-left (in $\text{lhs} \cap \text{out}$)
+- N - free-right (in $\text{rhs} \cap \text{out}$)
+- K - contract (in $\text{lhs} \cap \text{rhs}$)
 
 Pick any orderings $b_1,\ldots,b_{|B|}$, $m_1,\ldots,m_{|M|}$, $n_1,\ldots,n_{|N|}$, $k_1,\ldots,k_{|K|}$. Permute lhs to `(b, m, k)` and rhs to `(b, k, n)`:
 
@@ -26,7 +26,7 @@ $$
 L_{(b),(m),(k)} = \text{lhs}_{b, m, k}, \quad R_{(b),(k),(n)} = \text{rhs}_{b, k, n}
 $$
 
-$(b)$ flattens the batch dims, $(m)$ flattens all M dims, and so on—each flattened dim is the product of the corresponding axis sizes. The contraction becomes:
+$(b)$ flattens the batch dims, $(m)$ flattens all M dims, and so on - each flattened dim is the product of the corresponding axis sizes. The contraction becomes:
 
 $$C_{(b),(m),(n)} = \sum_{(k)} L_{(b),(m),(k)} \, R_{(b),(k),(n)}$$
 
@@ -44,12 +44,12 @@ For row-major contiguous input, the target permutation must coincide with the na
 
 - $(M, K) \to (M, K)$ is free.
 - $(K, M) \to (M, K)$ needs a physical transpose unless $K=1$ or $M=1$.
-- $(B_1, B_2, M, K) \to (B_1 B_2, M, K)$ is free—flattening contiguous dims.
+- $(B_1, B_2, M, K) \to (B_1 B_2, M, K)$ is free - flattening contiguous dims.
 - $(M, B, K) \to (B, M, K)$ needs physical movement.
 
-When the would-be permutation is exactly a 2D transpose of the inner block, the backend dispatches to `linalg.batched_matmul`'s `transpose_a` / `transpose_b` flags—cuBLAS / Apple BLAS handle it as a packing variant rather than a separate kernel. For more general permutations:
+When the would-be permutation is exactly a 2D transpose of the inner block, the backend dispatches to `linalg.batched_matmul`'s `transpose_a` / `transpose_b` flags - cuBLAS / Apple BLAS handle it as a packing variant rather than a separate kernel. For more general permutations:
 
-1. Materialize the permute into a fresh buffer (TTGT—Transpose-Transpose-GEMM-Transpose).
+1. Materialize the permute into a fresh buffer (TTGT - Transpose-Transpose-GEMM-Transpose).
 2. Fuse the permute into the GEMM's tile-loading code (see [[#3. GETT: GEMM-like Tensor-Tensor multiplication|GETT]]).
 
 `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` does (2).
@@ -63,7 +63,7 @@ Once we're at $(B, M, K) \times (B, K, N) \to (B, M, N)$, the workhorse is `lina
 - CPU + Apple Silicon $\to$ `apple_accelerate.mojo` calls vDSP/AMX through Accelerate.
 - CPU + AVX-512 $\to$ BLIS-style micro-kernel with packing.
 
-For non-BMM-shaped contractions—small K, small M, weird strides—we pay the indexing math of the BMM kernel without amortizing it over enough FLOPs. GETT is the workaround.
+For non-BMM-shaped contractions - small K, small M, weird strides - we pay the indexing math of the BMM kernel without amortizing it over enough FLOPs. GETT is the workaround.
 
 ## 2. Contraction-path cost models
 
@@ -71,15 +71,15 @@ For multi-operand einsum, pairwise contraction order moves runtime by orders of 
 
 ### Reduced-size heuristic (greedy)
 
-A pairwise step's cost has two parts: FLOPs and intermediate size. They couple on BMM-shaped contractions—bigger intermediates means more FLOPs—but the coupling is not perfect.
+A pairwise step's cost has two parts: FLOPs and intermediate size. They couple on BMM-shaped contractions - bigger intermediates means more FLOPs - but the coupling is not perfect.
 
 `greedy` uses a single scalar:
 
 $$\text{cost}_{\text{reduced\_size}}(A, B) = |A| + |B| - |A \otimes B|$$
 
-where $|A|$ is the element count of $A$ and $|A \otimes B|$ is the element count of $A \cdot B$. Bigger reduction wins—it prefers steps that shrink the working set most.
+where $|A|$ is the element count of $A$ and $|A \otimes B|$ is the element count of $A \cdot B$. Bigger reduction wins - it prefers steps that shrink the working set most.
 
-Smith et al. 2018 (`opt_einsum`, JOSS 3:753) reports near-optimal paths on ML-shaped contractions ($n \le 10$) at $O(n^2)$ per step instead of the DP's exponential. The classic failure: several large intermediates of comparable size compete with one small intermediate, and the heuristic picks on absolute reduction instead of ratio—a $1000 \to 100$ step beats a $100 \to 10$ step even when the latter unlocks better downstream choices.
+Smith et al. 2018 (`opt_einsum`, JOSS 3:753) reports near-optimal paths on ML-shaped contractions ($n \le 10$) at $O(n^2)$ per step instead of the DP's exponential. The classic failure: several large intermediates of comparable size compete with one small intermediate, and the heuristic picks on absolute reduction instead of ratio - a $1000 \to 100$ step beats a $100 \to 10$ step even when the latter unlocks better downstream choices.
 
 ### Optimal DP (Bellman-Held-Karp)
 
@@ -89,19 +89,19 @@ $$f(S) = \min_{\emptyset \subsetneq T \subsetneq S} \left[ f(T) + f(S \setminus 
 
 with $f(\{i\}) = 0$ for singletons. Answer: $f(\{1, \ldots, n\})$. Recover the first split by recording the minimizing $T$ at each subset.
 
-$O(3^n)$ time—each $(T, S \setminus T)$ pair visited once, $3^n / 2$ total pairs. $O(2^n)$ memory. At $n=16$: 43M states, ~5s on a modern CPU—usable for compile-time, impractical past $n=20$.
+$O(3^n)$ time - each $(T, S \setminus T)$ pair visited once, $3^n / 2$ total pairs. $O(2^n)$ memory. At $n=16$: 43M states, ~5s on a modern CPU - usable for compile-time, impractical past $n=20$.
 
 Pure FLOPs gives compute-optimal paths; pure memory gives memory-optimal paths; `opt_einsum`'s default mixes them via `reduced_size` per step.
 
-We ship FLOPs (`path.mojo`) as the DP cost—compute-optimal—and use `reduced_size` only inside the greedy.
+We ship FLOPs (`path.mojo`) as the DP cost - compute-optimal - and use `reduced_size` only inside the greedy.
 
 ### Why not `reduced_size` as the DP cost too?
 
-You can—`opt_einsum` offers both.
+You can - `opt_einsum` offers both.
 
 FLOPs directly determine compute time on the BMM-lowered path (cubic in the inner loop), and memory cost is bounded by FLOPs to within a factor of $|K|$. `reduced_size`'s pitch is peak memory as a hard constraint (OOM), and on GPU peak intermediates often dominate runtime through eviction.
 
-For ML-shaped einsums ($\le 8$ operands, each $\le 6$ dims) the two cost models converge. They diverge for tensor-network contractions ($n > 20$) where slicing—accepting more FLOPs to fit memory—matters. We don't ship cotengra-style slicing yet.
+For ML-shaped einsums ($\le 8$ operands, each $\le 6$ dims) the two cost models converge. They diverge for tensor-network contractions ($n > 20$) where slicing - accepting more FLOPs to fit memory - matters. We don't ship cotengra-style slicing yet.
 
 ### Cardoso et al. 2024
 
@@ -115,7 +115,7 @@ with $\alpha$ tuned per-problem.
 
 ### The branch family
 
-`opt_einsum` ships `branch-all`, `branch-2`, `branch-1`—best-first searches over the contraction tree, pruned by current best total. They sit between DP-optimal and greedy on the time/quality curve. For $n=5\text{-}7$ they're often the sweet spot. To be implemented.
+`opt_einsum` ships `branch-all`, `branch-2`, `branch-1` - best-first searches over the contraction tree, pruned by current best total. They sit between DP-optimal and greedy on the time/quality curve. For $n=5\text{-}7$ they're often the sweet spot. To be implemented.
 
 ## 3. GETT: GEMM-like Tensor-Tensor multiplication
 
@@ -127,9 +127,9 @@ GETT (Springer et al. 2018, [arxiv 1607.00145](https://arxiv.org/abs/1607.00145)
 
 BLIS (Van Zee et al.) decomposes a GEMM kernel into three layers:
 
-1. **Partition loops**—outer loops over M, N, K tiles.
-2. **Packing**—copy each tile from its source layout into a tight, register-aligned buffer (Apack for A, Bpack for B).
-3. **Micro-kernel**—the inner FLOP loop, register-blocked at the hardware tile shape ($6 \times 8$ for AVX-512 fp64, $64 \times 128 \times 16$ for SM90 WGMMA).
+1. **Partition loops** - outer loops over M, N, K tiles.
+2. **Packing** - copy each tile from its source layout into a tight, register-aligned buffer (Apack for A, Bpack for B).
+3. **Micro-kernel** - the inner FLOP loop, register-blocked at the hardware tile shape ($6 \times 8$ for AVX-512 fp64, $64 \times 128 \times 16$ for SM90 WGMMA).
 
 In a standard GEMM, packing is a memcpy with stride math.
 
@@ -157,9 +157,9 @@ for each M-tile, K-tile, N-tile:
 
 ### Empirical wins
 
-Matthews's TBLIS Table III (Haswell, dgemm): TBLIS within 5-10% of theoretical peak on most synthetic contractions, beating TTGT by 1.3-2.5× when permutes were expensive. Springer & Bientinesi report similar numbers for GETT on Skylake.
+Matthews's TBLIS Table III (Haswell, dgemm): TBLIS within 5-10% of theoretical peak on most synthetic contractions, beating TTGT by 1.3-2.5x when permutes were expensive. Springer & Bientinesi report similar numbers for GETT on Skylake.
 
-On GPU, cuTENSOR ships `CUTENSOR_ALGO_GETT` as a dispatch option. Hopper's WGMMA + TMA make GETT natural—TMA asynchronously fetches tile-shaped regions with arbitrary multi-dim strides directly into shared memory, and WGMMA consumes from shared without caring about source layout. GETT's "fuse the permute into packing" idea, at the hardware level. moeinsum's `NativeOptimizedBackend` (P12) follows this pattern.
+On GPU, cuTENSOR ships `CUTENSOR_ALGO_GETT` as a dispatch option. Hopper's WGMMA + TMA make GETT natural - TMA asynchronously fetches tile-shaped regions with arbitrary multi-dim strides directly into shared memory, and WGMMA consumes from shared without caring about source layout. GETT's "fuse the permute into packing" idea, at the hardware level. moeinsum's `NativeOptimizedBackend` (P12) follows this pattern.
 
 ### When GETT loses
 
@@ -183,31 +183,31 @@ Accumulated error is $\sum_k a_k b_k \epsilon_k$. Under independence and zero-me
 
 $$\sigma(\text{err}) \approx u \cdot \sqrt{K} \cdot \sigma(ab).$$
 
-For bf16 at $K=64$: $u\sqrt{64} \approx 7.8 \times 10^{-3} \cdot 8 = 6.2 \times 10^{-2}$—_6% relative error_. At $K=1024$: 25%. At $K=4096$ (typical transformer dim): 50%. **The results are garbage.**
+For bf16 at $K=64$: $u\sqrt{64} \approx 7.8 \times 10^{-3} \cdot 8 = 6.2 \times 10^{-2}$ - _6% relative error_. At $K=1024$: 25%. At $K=4096$ (typical transformer dim): 50%. **The results are garbage.**
 
-fp32 accumulation with bf16 inputs: $u\sqrt{K} \approx 1.2 \times 10^{-7} \cdot \sqrt{4096} \approx 7.7 \times 10^{-6}$ at $K=4096$—fine.
+fp32 accumulation with bf16 inputs: $u\sqrt{K} \approx 1.2 \times 10^{-7} \cdot \sqrt{4096} \approx 7.7 \times 10^{-6}$ at $K=4096$ - fine.
 
 ### Implementation rule
 
 For any einsum with $K > 64$ and low-precision inputs, use a higher-precision accumulator. cuBLAS bf16 GEMMs default to `CUBLAS_COMPUTE_32F`; cuTENSOR bf16 contractions default to `CUTENSOR_COMPUTE_32F`. bf16-accumulating bf16 is sane only when $K$ is statically known to be small (e.g. 16 in some attention heads).
 
-moeinsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16/bf16). `MaxBackend` forwards this to `linalg.batched_matmul`'s compute-type; the reference backend ignores it—always fp64 internally for v0.1—and is the source of truth for numerical regression testing.
+moeinsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16/bf16). `MaxBackend` forwards this to `linalg.batched_matmul`'s compute-type; the reference backend ignores it - always fp64 internally for v0.1 - and is the source of truth for numerical regression testing.
 
 ### Pairwise vs serial summation
 
-A second-order effect: even at full precision, serial accumulation of $K$ terms has worst-case error $O(K \cdot u)$. Pairwise summation (recurse-and-sum) reduces this to $O(\log K \cdot u)$. cuBLAS and modern GEMMs pairwise-sum inside the tile; a naive einsum kernel might not. moeinsum's reference is serial; the optimized backends (P11+) should pairwise-accumulate in the inner loop. Not a correctness issue for the reference—fp64 absorbs the worst case at any practical $K$—but a quality knob worth surfacing.
+A second-order effect: even at full precision, serial accumulation of $K$ terms has worst-case error $O(K \cdot u)$. Pairwise summation (recurse-and-sum) reduces this to $O(\log K \cdot u)$. cuBLAS and modern GEMMs pairwise-sum inside the tile; a naive einsum kernel might not. moeinsum's reference is serial; the optimized backends (P11+) should pairwise-accumulate in the inner loop. Not a correctness issue for the reference - fp64 absorbs the worst case at any practical $K$ - but a quality knob worth surfacing.
 
 ## 5. The diagonal stride trick
 
-Diagonal extraction (`'ii->i'`) and trace (`'ii->'`) are free—view-only, no copy—when implemented carefully.
+Diagonal extraction (`'ii->i'`) and trace (`'ii->'`) are free - view-only, no copy - when implemented carefully.
 
 For a 2D row-major contiguous matrix of shape $(n, n)$ with element size $s$:
 
 $$A_{ij} \text{ at byte offset } s \cdot (i \cdot n + j).$$
 
-The diagonal $A_{ii}$ has byte offset $s \cdot i \cdot (n + 1)$—a 1D strided view with element stride $(n+1)$, zero copy.
+The diagonal $A_{ii}$ has byte offset $s \cdot i \cdot (n + 1)$ - a 1D strided view with element stride $(n+1)$, zero copy.
 
-For higher rank—`'iji->ij'` extracts the $i=k$ slice of a 3D tensor—the same logic generalizes. If input has shape $(s_0, s_1, s_2)$ and strides $(\sigma_0, \sigma_1, \sigma_2)$ in elements, and we want the diagonal along axes 0 and 2 (label `i` repeated), the result has:
+For higher rank - `'iji->ij'` extracts the $i=k$ slice of a 3D tensor - the same logic generalizes. If input has shape $(s_0, s_1, s_2)$ and strides $(\sigma_0, \sigma_1, \sigma_2)$ in elements, and we want the diagonal along axes 0 and 2 (label `i` repeated), the result has:
 
 - shape $(s_0, s_1)$ (with $s_0 = s_2$)
 - strides $(\sigma_0 + \sigma_2, \sigma_1)$
@@ -216,11 +216,11 @@ In general, for a diagonal across $k$ repeated occurrences of one label at axes 
 
 moeinsum's `unary.mojo` (Phase 3) implements this: pull per-axis strides from the input's `Layout`, sum the strides of repeated labels into a new axis, build a new `Layout`. Zero copy whenever the input is contiguous-enough to be viewed.
 
-The historical bug (PyTorch issue #21760 et al.) was forgetting non-contiguous inputs. `A[::2, ::2]` is a 2× downsampled view—row stride `2n`, column stride 2, so the diagonal stride should be `2n + 2`, not `n + 1`. The contiguous-only formula gives the wrong answer.
+The historical bug (PyTorch issue #21760 et al.) was forgetting non-contiguous inputs. `A[::2, ::2]` is a 2x downsampled view - row stride `2n`, column stride 2, so the diagonal stride should be `2n + 2`, not `n + 1`. The contiguous-only formula gives the wrong answer.
 
 ## 6. Output-permutation choice
 
-Once `(*B, *M, *K) × (*B, *K, *N) → (*B, *M, *N)` is done, we permute `(*B, *M, *N)` to `out_labels`. There's a choice nobody documents well: swap lhs and rhs (compute `(*B, *N, *K) × (*B, *K, *M) → (*B, *N, *M)`) when that produces a result whose natural axis order already matches `out_labels`.
+Once `(*B, *M, *K) x (*B, *K, *N) -> (*B, *M, *N)` is done, we permute `(*B, *M, *N)` to `out_labels`. There's a choice nobody documents well: swap lhs and rhs (compute `(*B, *N, *K) x (*B, *K, *M) -> (*B, *N, *M)`) when that produces a result whose natural axis order already matches `out_labels`.
 
 JAX exploits this. `lax_numpy.py:3288-3300`:
 
@@ -239,4 +239,4 @@ else:
     operand = _dot_general(lhs, rhs, dimension_numbers, precision)
 ```
 
-moeinsum's `classify_pair` always uses lhs-first, so roughly half of contractions take a final permute they could have avoided. One-line conditional in the plan builder—perf-phase work.
+moeinsum's `classify_pair` always uses lhs-first, so roughly half of contractions take a final permute they could have avoided. One-line conditional in the plan builder - perf-phase work.

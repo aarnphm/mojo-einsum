@@ -1,15 +1,15 @@
-"""Reference backend — naive global-index loop.
+"""Reference backend - naive global-index loop.
 
 The simplest correct einsum: for every assignment of values to the union
 of all input labels, multiply the indexed input scalars, and accumulate
 into the indexed output position. Quadratic in the worst case (or worse
-— exponential in label count), but it always produces the right answer.
+ -  exponential in label count), but it always produces the right answer.
 That's the entire point: this is the golden against which every other
 backend is regression-tested.
 
 This backend operates on flat `Float64` buffers + explicit shapes /
 strides. It does *not* depend on `TileTensor` or any MAX kernel, so it
-is fully self-contained — useful for testing the parser, plan builder,
+is fully self-contained - useful for testing the parser, plan builder,
 and dim classification in isolation from the MAX integration.
 
 Memory model:
@@ -21,7 +21,7 @@ Memory model:
 Implementation notes:
   - We walk a global index vector of length `n_labels`, where slot `k`
     iterates over the size of label `k`. Total iterations = product of
-    label sizes. For BMM-shaped contractions this is O(B*M*N*K) — the
+    label sizes. For BMM-shaped contractions this is O(B*M*N*K) - the
     correct FLOP count.
   - For each global index, project to per-operand indices via that
     operand's label list, look up the scalar, multiply across operands.
@@ -43,7 +43,7 @@ def _resolve_label_sizes(
 
     Raises if the same label is given inconsistent sizes across operands
     (other than the size-1 broadcast case, which we surface as an error
-    here and let the caller decide — reference is strict by design).
+    here and let the caller decide - reference is strict by design).
     """
     var sizes = List[Int]()
     for _ in range(eq.n_labels):
@@ -86,7 +86,7 @@ def _resolve_label_sizes(
                 )
 
     # Any label that survived only in the output (not in any input) is
-    # an error — there's no source to read from.
+    # an error - there's no source to read from.
     for lbl in eq.output:
         if sizes[lbl] == -1:
             raise Error(

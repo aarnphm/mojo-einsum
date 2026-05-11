@@ -25,7 +25,7 @@ Read left to right: operand label sequences separated by commas, an arrow, the o
 
 The convention applies to one operand as naturally as to two.
 
-**Sum.** `"ij->"` contracts both `i` and `j` away — the result is a scalar:
+**Sum.** `"ij->"` contracts both `i` and `j` away - the result is a scalar:
 
 $$s = \sum_{ij} A_{ij}$$
 
@@ -45,7 +45,7 @@ $$t = \sum_i A_{ii}$$
 
 Collapse the diagonal first (the repeated-`i` constraint), then sum out the surviving `i`. Result is a scalar.
 
-**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's rule: every label appearing exactly once across all inputs, sorted alphabetically, is the output. So `"ij"` equals `"ij->ij"`, and `"ii"` equals `"ii->"` (every label appears more than once, so the output has no labels — a scalar).
+**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's rule: every label appearing exactly once across all inputs, sorted alphabetically, is the output. So `"ij"` equals `"ij->ij"`, and `"ii"` equals `"ii->"` (every label appears more than once, so the output has no labels - a scalar).
 
 ## Two-operand operations
 
@@ -71,13 +71,13 @@ $$y_i = \sum_j A_{ij} x_j$$
 
 $$s = \sum_{ij} A_{ij} B_{ij}$$
 
-**Trace of a product.** `"ij,ji->"` — both `i` and `j` contract:
+**Trace of a product.** `"ij,ji->"` - both `i` and `j` contract:
 
 $$t = \sum_{ij} A_{ij} B_{ji} = \mathrm{tr}(AB)$$
 
 ## The four label categories
 
-For any two-operand contraction `lhs,rhs->out`, every label falls into one of four categories — the B/K/M/N classification JAX and PyTorch both use internally:
+For any two-operand contraction `lhs,rhs->out`, every label falls into one of four categories - the B/K/M/N classification JAX and PyTorch both use internally:
 
 - **B** (batch): in `lhs`, `rhs`, and `out`. Broadcast across it.
 - **K** (contract): in `lhs` and `rhs`, not in `out`. Summed out.
@@ -86,22 +86,22 @@ For any two-operand contraction `lhs,rhs->out`, every label falls into one of fo
 
 | Equation       | B   | M   | K    | N   |
 | -------------- | --- | --- | ---- | --- |
-| `ij,jk->ik`    | —   | i   | j    | k   |
+| `ij,jk->ik`    | -   | i   | j    | k   |
 | `bij,bjk->bik` | b   | i   | j    | k   |
-| `ij,ij->`      | —   | —   | i, j | —   |
-| `ij,ji->`      | —   | —   | i, j | —   |
+| `ij,ij->`      | -   | -   | i, j | -   |
+| `ij,ji->`      | -   | -   | i, j | -   |
 | `bij,bkj->bik` | b   | i   | j    | k   |
 
-`ij,ji->` and `ij,ij->` share a B/K/M/N table but have different stride math — _the second operand is transposed in one but not the other_. The classifier doesn't capture this; the planner has to.
+`ij,ji->` and `ij,ij->` share a B/K/M/N table but have different stride math - _the second operand is transposed in one but not the other_. The classifier doesn't capture this; the planner has to.
 
 ## Multi-operand and the contraction path
 
-Einsum scales to any number of operands. `"ij,jk,kl->il"` contracts three matrices in sequence. There's no built-in associativity rule — the implementation picks a _path_, a binary tree of pairwise contractions. For three matrices there are two:
+Einsum scales to any number of operands. `"ij,jk,kl->il"` contracts three matrices in sequence. There's no built-in associativity rule - the implementation picks a _path_, a binary tree of pairwise contractions. For three matrices there are two:
 
 - `(ij, jk) -> ik`, then `(ik, kl) -> il`
 - `(jk, kl) -> jl`, then `(ij, jl) -> il`
 
-Bellman's matrix-chain example shows why the choice matters by orders of magnitude. Let $A$ be $100 \times 1$, $B$ be $1 \times 10^5$, $C$ be $10^5 \times 1$ — the final result is a single scalar.
+Bellman's matrix-chain example shows why the choice matters by orders of magnitude. Let $A$ be $100 \times 1$, $B$ be $1 \times 10^5$, $C$ be $10^5 \times 1$ - the final result is a single scalar.
 
 | Path    | First step                      | Intermediate      | Second step                     | Total ops           |
 | ------- | ------------------------------- | ----------------- | ------------------------------- | ------------------- |
@@ -110,7 +110,7 @@ Bellman's matrix-chain example shows why the choice matters by orders of magnitu
 
 200x in FLOPs, $10^7$x in peak intermediate memory.[^moe] Path selection is its own optimization problem; moeinsum implements `opt_einsum`'s family natively (`greedy`, `optimal`, `random-greedy`, `branch`, `auto`). Algorithms in `derivations.md`.
 
-[^moe]: This shape pattern shows up in MoE routing — a wide ephemeral activation between two narrow projections — which is why the chain matters in practice and not just in textbooks.
+[^moe]: This shape pattern shows up in MoE routing - a wide ephemeral activation between two narrow projections - which is why the chain matters in practice and not just in textbooks.
 
 ## Ellipsis: broadcasting across unknown ranks
 
@@ -124,9 +124,9 @@ moeinsum's parser represents ellipsis with a sentinel label (`-1`) on the first 
 
 Multi-head attention is two einsums and a softmax. Given:
 
-- Q of shape `(batch, heads, seq_q, dim_head)` — labels `bhqd`
-- K of shape `(batch, heads, seq_k, dim_head)` — labels `bhkd`
-- V of shape `(batch, heads, seq_k, dim_v)` — labels `bhkv`
+- Q of shape `(batch, heads, seq_q, dim_head)` - labels `bhqd`
+- K of shape `(batch, heads, seq_k, dim_head)` - labels `bhkd`
+- V of shape `(batch, heads, seq_k, dim_v)` - labels `bhkv`
 
 Pre-softmax scores:
 
@@ -164,7 +164,7 @@ Labels intern as ints. NumPy and PyTorch use chars and inherit a 52-label limit 
 
 [^tn-tradeoff]: This trades cache locality (one byte per char) for label-space (one int per label). For ML workloads the cap matters more than the byte; for tensor-network workloads with millions of labels per equation the calculus inverts.
 
-The `EinsumEquation` feeds the path optimizer (`path.mojo`), which produces a `ContractionPath` — a sequence of pairwise contraction steps. Each step becomes a `PlanStep` with B/K/M/N classification baked in (`classify_pair` in `plan.mojo` mirrors JAX's classifier).
+The `EinsumEquation` feeds the path optimizer (`path.mojo`), which produces a `ContractionPath` - a sequence of pairwise contraction steps. Each step becomes a `PlanStep` with B/K/M/N classification baked in (`classify_pair` in `plan.mojo` mirrors JAX's classifier).
 
 The `ContractionPlan` is the IR backends consume. Backends decide how to execute each step: pairwise steps lower to batched matmul on appropriate reshapes; unary steps lower to sum, diagonal, transpose, or trace.
 

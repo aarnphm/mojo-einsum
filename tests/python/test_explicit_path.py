@@ -1,7 +1,7 @@
 """Explicit caller-supplied path tests (P4 close-out).
 
 `optimize=[(i, j), ...]` lets a caller skip the planner and pass a
-literal contraction path — matches numpy.einsum / opt_einsum's API.
+literal contraction path - matches numpy.einsum / opt_einsum's API.
 The path is validated against working-set semantics: each pairwise step
 removes two operands and appends one result, each unary step is a no-op
 on size, and the final working set must contain exactly one tensor.

@@ -11,7 +11,7 @@ from einsum.parse import parse, expand_ellipsis, ELLIPSIS_LABEL, EinsumEquation
 from einsum.plan import build_naive_plan, ContractionPlan
 from einsum.path import compute_path, ContractionStep
 from einsum.backends.reference import _resolve_label_sizes
-# Import-only check — confirms the skeleton compiles. Calling
+# Import-only check - confirms the skeleton compiles. Calling
 # `execute_native(...)` would raise; we just need the symbol to resolve.
 from einsum.backends.native import execute_native
 
@@ -54,7 +54,7 @@ def check_ellipsis() raises:
     if not has_ellipsis:
         raise Error(String("ellipsis: lhs should contain ELLIPSIS_LABEL"))
     var ranks = List[Int]()
-    ranks.append(4)  # ...ij with 4-D input → ellipsis is 2 dims
+    ranks.append(4)  # ...ij with 4-D input -> ellipsis is 2 dims
     ranks.append(2)  # jk with 2-D
     expand_ellipsis(eq, ranks)
     # After expansion: lhs has 4 labels, output has 4 labels.
@@ -114,7 +114,7 @@ def check_path_greedy() raises:
 
 
 def check_path_branch() raises:
-    # 4-operand matrix chain — exercise branch-{all,2,1} dispatch.
+    # 4-operand matrix chain - exercise branch-{all,2,1} dispatch.
     # branch-1 must equal greedy by construction. branch-all and
     # branch-2 must produce a valid path (3 steps for n=4).
     var eq = parse(String("ab,bc,cd,de->ae"))
@@ -197,7 +197,7 @@ def check_path_random_greedy_n() raises:
 
 
 def check_path_invalid_random_greedy() raises:
-    # Suffix must be numeric and ≥ 1.
+    # Suffix must be numeric and >= 1.
     var eq = parse(String("ij,jk->ik"))
     var shapes = List[List[Int]]()
     var s0 = List[Int]()
@@ -241,7 +241,7 @@ def main() raises:
     check_path_branch()
     check_path_random_greedy_n()
     check_path_invalid_random_greedy()
-    # `execute_native` is import-only — calling it would raise the
+    # `execute_native` is import-only - calling it would raise the
     # Phase 11/12 NotImplementedError, which we want to defer until the
     # kernel work actually starts.
     _ = execute_native

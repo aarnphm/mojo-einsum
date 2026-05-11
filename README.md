@@ -7,26 +7,26 @@ import numpy as np
 import moeinsum
 
 # Bellman matrix chain. Naive left-to-right pairs `(AB)C` and pays
-# ~2e7 FLOPs. `auto` picks `A(BC)` and pays ~2e5 — 100x cheaper.
+# ~2e7 FLOPs. `auto` picks `A(BC)` and pays ~2e5 - 100x cheaper.
 A = np.random.randn(100, 1)
 B = np.random.randn(1, 100_000)
 C = np.random.randn(100_000, 1)
 
 moeinsum.einsum_path("ij,jk,kl->il", A.shape, B.shape, C.shape, optimize="auto")
-# → [(1, 2), (0, 1)]    ← (BC) first, then A·(BC)
+# -> [(1, 2), (0, 1)]    <- (BC) first, then A*(BC)
 
 out = moeinsum.einsum("ij,jk,kl->il", A, B, C)            # default optimize="auto"
-# → shape (100, 1), agrees with np.einsum within 1e-10
+# -> shape (100, 1), agrees with np.einsum within 1e-10
 ```
 
-Pass tensors from any DLPack-capable framework — `numpy`, `torch`,
+Pass tensors from any DLPack-capable framework - `numpy`, `torch`,
 `jax`, `mlx`, `cupy`, `tensorflow`. The return type mirrors the first
-operand's framework (torch in → torch out), or use `return_type="numpy"`
+operand's framework (torch in -> torch out), or use `return_type="numpy"`
 to force.
 
 ## What's in v0.1
 
-- **Parser** (`parse.mojo`): full einsum equation grammar — basic, ellipsis, trace, diagonal, implicit output, multi-char-via-int-interning.
+- **Parser** (`parse.mojo`): full einsum equation grammar - basic, ellipsis, trace, diagonal, implicit output, multi-char-via-int-interning.
 - **Plan IR** (`plan.mojo`): backend-agnostic `ContractionPlan` with B/K/M/N classification per JAX's `_einsum`.
 - **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `branch`, `random-greedy`, and `auto` algorithms.
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
@@ -37,12 +37,12 @@ to force.
 
 ## Docs
 
-- [`docs/notation.md`](docs/notation.md) — einsum notation primer.
-- [`docs/derivations.md`](docs/derivations.md) — BMM lowering math, contraction-tree cost models, GETT, √K accumulation rule.
-- [`docs/perf.md`](docs/perf.md) — tuning guide, backend selection, profile triage.
-- [`docs/comparisons.md`](docs/comparisons.md) — scorecard vs NumPy / PyTorch / JAX / cuTENSOR / TBLIS.
-- [`docs/ffi.md`](docs/ffi.md) — FFI cutover design-spike for P5/P10/P11/P12.
-- [`docs/plan-verification.md`](docs/plan-verification.md) — claim → test map for the plan's `## Verification` section.
+- [`docs/notation.md`](docs/notation.md) - einsum notation primer.
+- [`docs/derivations.md`](docs/derivations.md) - BMM lowering math, contraction-tree cost models, GETT, sqrtK accumulation rule.
+- [`docs/perf.md`](docs/perf.md) - tuning guide, backend selection, profile triage.
+- [`docs/comparisons.md`](docs/comparisons.md) - scorecard vs NumPy / PyTorch / JAX / cuTENSOR / TBLIS.
+- [`docs/ffi.md`](docs/ffi.md) - FFI cutover design-spike for P5/P10/P11/P12.
+- [`docs/plan-verification.md`](docs/plan-verification.md) - claim -> test map for the plan's `## Verification` section.
 
 ## Install
 
@@ -55,26 +55,26 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 
 ## Roadmap
 
-| Phase | Status | What                                                                                       |
-| ----- | ------ | ------------------------------------------------------------------------------------------ |
-| P0    | ✅     | Scaffolding                                                                                |
-| P1    | ✅     | Reference backend + parser + plan + numpy bridge                                           |
-| P2    | ✅     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                     |
-| P3    | ✅     | Unary kernels (transpose / diagonal / sum / trace)                                         |
-| P4    | ✅     | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family             |
-| P5    | ⏳     | `MaxBackend` dispatching to `linalg.batched_matmul` — design-spike in `docs/ffi.md`        |
-| P6    | ✅     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred     |
-| P7    | ✅     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                               |
-| P8    | ✅     | DLPack interop: dtype-preserving in/out, framework-native return (torch in → torch out)    |
-| P9    | ✅\*   | Precision (parameters wired; real low-precision lands with MaxBackend)                     |
-| P10   | ⏳     | GPU dispatch validation (target="gpu" via batched_matmul)                                  |
-| P11   | 🛠     | Native CPU GETT skeleton at `src/einsum/backends/native.mojo`; kernel work pending         |
-| P12   | 🛠     | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                          |
-| P13   | ✅     | Benchmark CLI (`moeinsum-bench` script)                                                    |
-| P14   | 🛠     | `MaxGraphBackend`: plan-to-graph translation shipped; `max.graph.ops` codegen pending      |
-| P15   | ✅     | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                  |
+| Phase | Status | What                                                                                    |
+| ----- | ------ | --------------------------------------------------------------------------------------- |
+| P0    | done     | Scaffolding                                                                             |
+| P1    | done     | Reference backend + parser + plan + numpy bridge                                        |
+| P2    | done     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                  |
+| P3    | done     | Unary kernels (transpose / diagonal / sum / trace)                                      |
+| P4    | done     | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family          |
+| P5    | pending     | `MaxBackend` dispatching to `linalg.batched_matmul` - design-spike in `docs/ffi.md`     |
+| P6    | done     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred  |
+| P7    | done     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                            |
+| P8    | done     | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out) |
+| P9    | done\*   | Precision (parameters wired; real low-precision lands with MaxBackend)                  |
+| P10   | pending     | GPU dispatch validation (target="gpu" via batched_matmul)                               |
+| P11   | skeleton     | Native CPU GETT skeleton at `src/einsum/backends/native.mojo`; kernel work pending      |
+| P12   | skeleton     | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                       |
+| P13   | done     | Benchmark CLI (`moeinsum-bench` script)                                                 |
+| P14   | skeleton     | `MaxGraphBackend`: plan-to-graph translation shipped; `max.graph.ops` codegen pending   |
+| P15   | done     | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed               |
 
-✅ shipped · ✅\* shipped first pass (real polish deferred to P5) · 🛠 skeleton landed, full impl pending · ⏳ pending.
+done shipped * done\* shipped first pass (real polish deferred to P5) * skeleton skeleton landed, full impl pending * pending pending.
 
 See [`progress.md`](progress.md) for the local working notes (gitignored).
 
@@ -91,7 +91,7 @@ We create a small plan IR to let backend decides how to consume this.
   - `native` runs our own SIMD/GPU kernels with GETT-style fused permute;
   - `max_graph` lifts the plan to a MAX graph for whole-graph fusion.
 
-See [`docs/derivations.md`](docs/derivations.md) §1 for the BMM-lowering proof.
+See [`docs/derivations.md`](docs/derivations.md) Section 1 for the BMM-lowering proof.
 
 ## License
 

@@ -15,16 +15,16 @@ is concrete from day one and downstream code (Python `_BACKENDS` tuple,
 Kernel surface targets (each implemented when the corresponding kernel
 lands; today every one raises `Phase 11/12 work`):
 
-  - `_pack_lhs[BM, BK]` — pack `(*B, M, K)` slab from a strided tile
+  - `_pack_lhs[BM, BK]` - pack `(*B, M, K)` slab from a strided tile
     into a contiguous shared-memory buffer, writing in `(BM, BK)` order
     with the permutation applied inside the loop. Avoids the TTGT
     intermediate.
-  - `_pack_rhs[BK, BN]` — same for `(*B, K, N)`.
-  - `_compute_microkernel` — SIMD `MR × NR` outer-product loop on CPU,
+  - `_pack_rhs[BK, BN]` - same for `(*B, K, N)`.
+  - `_compute_microkernel` - SIMD `MR x NR` outer-product loop on CPU,
     `TensorCoreAsync[mma_shape=Index(64, 128, 16)]` on SM90 with
     `warpgroup_fence()` bracketing.
 
-The Phase-11/12 design lives in `docs/derivations.md §3`; this file
+The Phase-11/12 design lives in `docs/derivations.md Section 3`; this file
 stays a stub until the kernel work starts.
 """
 
@@ -69,7 +69,7 @@ def execute_native(
 
 
 # ---------------------------------------------------------------------
-# CPU GETT — Phase 11 design (no code yet)
+# CPU GETT - Phase 11 design (no code yet)
 # ---------------------------------------------------------------------
 #
 # TBLIS approach: fuse the permutation into the inner-most pack pass.
@@ -92,7 +92,7 @@ def execute_native(
 #
 #
 # ---------------------------------------------------------------------
-# GPU GETT — Phase 12 design (no code yet)
+# GPU GETT - Phase 12 design (no code yet)
 # ---------------------------------------------------------------------
 #
 # SM90 warp-specialized matmul with TMA tile loads, WGMMA-issuing
@@ -103,6 +103,6 @@ def execute_native(
 #   - `warpgroup_fence()` BEFORE and AFTER every `TensorCoreAsync.mma`
 #     batch (anti-pattern: only one fence).
 #   - `cuda.cp.async.bulk.tensor.shared::cluster.global.tile` for TMA
-#     loads (avoid manual gmem→smem copies).
+#     loads (avoid manual gmem->smem copies).
 #   - Multiple-accumulator ILP in the WGMMA loop (4-8 D-tiles per
 #     warpgroup so the issue/retire pipeline saturates).

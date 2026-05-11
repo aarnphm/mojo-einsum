@@ -1,13 +1,13 @@
 """Single-operand kernels.
 
 Implements the four unary ops a `UnaryStep` can describe:
-  - REDUCE_SUM   — sum out a set of axes.
-  - DIAGONAL     — repeated-label gather via stride summation.
-  - TRACE        — DIAGONAL followed by REDUCE_SUM.
-  - TRANSPOSE    — pure label permutation, layout-only (zero copy).
+  - REDUCE_SUM   - sum out a set of axes.
+  - DIAGONAL     - repeated-label gather via stride summation.
+  - TRACE        - DIAGONAL followed by REDUCE_SUM.
+  - TRANSPOSE    - pure label permutation, layout-only (zero copy).
 
 These kernels operate on flat Float64 buffers with explicit shapes /
-strides (in elements). Same memory model as `reference.mojo` — the
+strides (in elements). Same memory model as `reference.mojo` - the
 difference is we exploit structure to skip copies where possible.
 
 `diagonal_view` and `transpose_view` are pure-metadata: they return a
@@ -28,7 +28,7 @@ struct ShapeStrides(Copyable, Movable):
 
 
 # ---------------------------------------------------------------------
-# TRANSPOSE — pure layout permutation, zero copy
+# TRANSPOSE - pure layout permutation, zero copy
 # ---------------------------------------------------------------------
 
 def transpose_view(
@@ -72,7 +72,7 @@ def transpose_view(
 
 
 # ---------------------------------------------------------------------
-# DIAGONAL — stride summation across repeated axes
+# DIAGONAL - stride summation across repeated axes
 # ---------------------------------------------------------------------
 
 def diagonal_view(
@@ -83,7 +83,7 @@ def diagonal_view(
     """Build a view representing the diagonal across `diag_groups`.
 
     Each inner list of `diag_groups` is a set of axis positions whose
-    labels are equal — the diagonal sets `index_i == index_j == ...`
+    labels are equal - the diagonal sets `index_i == index_j == ...`
     for those axes. All axes in one group must have the same size.
 
     The first axis position from each group survives with stride equal
@@ -138,7 +138,7 @@ def diagonal_view(
 
 
 # ---------------------------------------------------------------------
-# REDUCE_SUM — walk and accumulate
+# REDUCE_SUM - walk and accumulate
 # ---------------------------------------------------------------------
 
 def reduce_sum_axes(
@@ -157,7 +157,7 @@ def reduce_sum_axes(
 
     Two nested mixed-radix counters: outer over kept axes, inner over
     reduced axes. SIMD vectorization across contiguous inner-reduce is
-    a P3 polish item — current form is correct on all stride patterns.
+    a P3 polish item - current form is correct on all stride patterns.
     """
     var is_reduce = List[Bool]()
     for _ in range(len(in_shape)):
@@ -221,6 +221,6 @@ def reduce_sum_axes(
             break
 
 
-# TRACE = diagonal_view → reduce_sum_axes (NumPy / PyTorch pattern).
+# TRACE = diagonal_view -> reduce_sum_axes (NumPy / PyTorch pattern).
 # The backend composes these two steps from a single UnaryStep with both
 # `diag_axes` and `reduce_axes` populated. No separate trace kernel needed.

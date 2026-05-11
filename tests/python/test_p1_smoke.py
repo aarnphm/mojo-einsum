@@ -1,8 +1,8 @@
-"""P1 smoke tests — exercise parser + reference backend against numpy.einsum.
+"""P1 smoke tests - exercise parser + reference backend against numpy.einsum.
 
 These are intentionally narrow: they validate that the P1 stupid einsum
 returns numerically identical results to numpy on a curated set of
-equations. The full ≥150-case parity suite arrives in P8.
+equations. The full >=150-case parity suite arrives in P8.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def test_parse_double_dot() -> None:
 
 
 # ---------------------------------------------------------------------
-# Reference backend — numpy parity
+# Reference backend - numpy parity
 # ---------------------------------------------------------------------
 
 # Canonical curated cases. Each row: (eq, shapes). Operands are seeded
@@ -107,7 +107,7 @@ def test_numpy_parity(eq: str, shapes: list[tuple[int, ...]]) -> None:
 
 
 def test_path_naive_left_to_right() -> None:
-  # 3 operands → 2 pairwise steps. Naive ordering pairs (0,1) then
+  # 3 operands -> 2 pairwise steps. Naive ordering pairs (0,1) then
   # (0,1) again (accumulator at slot 0, next operand at slot 1).
   path = moeinsum.einsum_path("ij,jk,kl->il", (2, 3), (3, 4), (4, 5), optimize="naive")
   assert len(path) == 2
@@ -138,9 +138,9 @@ def test_path_single_operand() -> None:
 
 
 def test_path_bellman_chain() -> None:
-  # Classic matrix-chain demo from docs/notation.md: A:100×1, B:1×10^5,
-  # C:10^5×1. Naive (AB)C costs ~2×10^7 flops with a huge intermediate;
-  # A(BC) costs ~10^5. Greedy / optimal / auto must all pick A(BC) —
+  # Classic matrix-chain demo from docs/notation.md: A:100x1, B:1x10^5,
+  # C:10^5x1. Naive (AB)C costs ~2x10^7 flops with a huge intermediate;
+  # A(BC) costs ~10^5. Greedy / optimal / auto must all pick A(BC)  - 
   # which in working-set indices is (1, 2) then (0, 1).
   shapes = ((100, 1), (1, 100_000), (100_000, 1))
   for algo in ("greedy", "optimal", "auto"):
@@ -177,7 +177,7 @@ def test_path_random_greedy_with_trial_count() -> None:
 
 
 def test_path_random_greedy_zero_trials_rejected() -> None:
-  """N must be ≥ 1; N=0 and non-numeric suffixes raise."""
+  """N must be >= 1; N=0 and non-numeric suffixes raise."""
   with pytest.raises(ValueError, match="unknown optimize"):
     moeinsum.einsum_path("ij,jk->ik", (2, 3), (3, 4), optimize="random-greedy-0")
   with pytest.raises(ValueError, match="unknown optimize"):

@@ -3,7 +3,7 @@
 Run with:
     mojo run -I src tests/mojo/smoke_path_cost.mojo
 
-Plan §-Outstanding (2) — currently `_flop_cost` and `_reduced_size_cost`
+Plan Section -Outstanding (2) - currently `_flop_cost` and `_reduced_size_cost`
 in `src/einsum/path.mojo` are exercised end-to-end via the path
 optimizer. These direct unit tests catch regressions in the cost
 helpers themselves without round-tripping through the planner.
@@ -17,7 +17,7 @@ arithmetic), so the tests are mostly about pinning the contract:
     `a = size(lhs)`, `b = size(rhs)`, `c = size(out)`. Bigger = more
     memory removed by the contraction = better candidate.
   - `_flop_cost(lhs, rhs, out, sizes)` = product of all label sizes
-    in `lhs ∪ rhs` — the natural nested-loop bound.
+    in `lhs cup rhs` - the natural nested-loop bound.
 
 We import the private helpers directly. Underscore prefix is a Mojo
 convention, not enforced; if a future refactor makes them truly
@@ -45,7 +45,7 @@ def check_tensor_size_empty() raises:
 
 
 def check_tensor_size_simple() raises:
-    """[0, 1] with sizes [3, 4] → 12."""
+    """[0, 1] with sizes [3, 4] -> 12."""
     var labels = List[Int]()
     labels.append(0)
     labels.append(1)
@@ -59,7 +59,7 @@ def check_tensor_size_simple() raises:
 
 
 def check_tensor_size_rank3() raises:
-    """[0, 1, 2] with sizes [2, 3, 5] → 30."""
+    """[0, 1, 2] with sizes [2, 3, 5] -> 30."""
     var labels = List[Int]()
     labels.append(0)
     labels.append(1)
@@ -140,7 +140,7 @@ def check_flop_cost_frobenius() raises:
 
 def check_reduced_size_matmul() raises:
     """`ij,jk->ik` with i=3, j=5, k=4:
-        a = i*j = 15, b = j*k = 20, c = i*k = 12 → 15+20-12 = 23.
+        a = i*j = 15, b = j*k = 20, c = i*k = 12 -> 15+20-12 = 23.
     """
     var lhs = List[Int]()
     lhs.append(0)
@@ -163,7 +163,7 @@ def check_reduced_size_matmul() raises:
 
 def check_reduced_size_outer_product() raises:
     """`i,j->ij` with i=3, j=5:
-        a = 3, b = 5, c = 15 → 3+5-15 = -7 (outer products *grow* memory).
+        a = 3, b = 5, c = 15 -> 3+5-15 = -7 (outer products *grow* memory).
     """
     var lhs = List[Int]()
     lhs.append(0)
@@ -183,7 +183,7 @@ def check_reduced_size_outer_product() raises:
 
 def check_reduced_size_frobenius_is_positive() raises:
     """`ij,ij->` with i=4, j=6:
-        a = 24, b = 24, c = 1 → 47 (full reduction is the best move).
+        a = 24, b = 24, c = 1 -> 47 (full reduction is the best move).
     """
     var lhs = List[Int]()
     lhs.append(0)

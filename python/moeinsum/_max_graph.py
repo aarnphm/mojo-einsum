@@ -1,37 +1,36 @@
-"""`MaxGraphBackend` — lifts a contraction plan to a MAX graph.
+"""`MaxGraphBackend` - lifts a contraction plan to a MAX graph.
 
 P14 stretch deliverable. The default `reference` backend executes each
 plan step eagerly with a global-index reduction loop; `MaxGraphBackend`
 instead assembles the entire plan as a `max.graph.Graph`, hands it to
-MAX's compiler, and lets MAX fuse — including any elementwise ops the
-caller composes around the einsum — into one kernel.
+MAX's compiler, and lets MAX fuse - including any elementwise ops the
+caller composes around the einsum - into one kernel.
 
-This module ships the *Python-side* plan-to-graph translation
-unconditionally. The actual `max.graph` import is lazy: when the
-package isn't installed, `MaxGraphBackend()` raises a precise
-`ImportError`, but `plan_to_graph_spec(...)` still returns the
-abstract plan description so callers can inspect what *would* be
-emitted. Tests that need the runtime call `require_max_graph()` and
-skip when it's missing.
+The plan-to-graph translation is owned by the Mojo `_native` extension:
+parsing, working-set semantics, unary detection, and B/K/M/N
+classification all come from the same IR as the reference backend.
+The actual `max.graph` import is lazy: when the package isn't
+installed, `MaxGraphBackend()` raises a precise `ImportError`, but
+`plan_to_graph_spec(...)` still returns the abstract plan description
+so callers can inspect what *would* be emitted. Tests that need the
+runtime call `require_max_graph()` and skip when it's missing.
 
 The translation per plan step (mirrors JAX's algorithm at
 `jax/_src/numpy/lax_numpy.py:3264-3293`):
 
   Classify dims into B / K / M / N buckets:
-    - B: batch — appears in lhs, rhs, and output
-    - K: contract — appears in lhs and rhs, not in output
-    - M: free-left — in lhs and output only
-    - N: free-right — in rhs and output only
+    - B: batch - appears in lhs, rhs, and output
+    - K: contract - appears in lhs and rhs, not in output
+    - M: free-left - in lhs and output only
+    - N: free-right - in rhs and output only
 
   Permute lhs to `(*B, *M, *K)` and rhs to `(*B, *K, *N)`.
-  Issue `matmul` → result has shape `(*B, *M, *N)`.
+  Issue `matmul` -> result has shape `(*B, *M, *N)`.
   Permute back to the equation's stated output order.
 
-Unary steps (trace, diagonal, axis-sum, transpose) lower to
-`max.graph.ops.{transpose, reduce_sum}` plus a fancy-indexing
-gather for the diagonal case. Per the plan we can fall back to a
-TTGT (transpose-transpose-gemm-transpose) lowering when the dim
-classification doesn't admit a direct matmul.
+Unary steps (trace, diagonal, axis-sum, transpose) are emitted in the
+spec. The current executable MAX path supports axis sums and
+transposes; diagonal extraction is still a reference-backend case.
 """
 
 from __future__ import annotations
@@ -41,12 +40,14 @@ import importlib.util
 from dataclasses import dataclass, field
 from typing import cast
 
+import numpy as np
+
 
 def is_available() -> bool:
   """Return True when the `max.graph` Python package is importable.
 
   `importlib.util.find_spec("max.graph")` raises ModuleNotFoundError
-  when the parent `max` package is missing (Python ≥3.4 quirk), so we
+  when the parent `max` package is missing (Python >=3.4 quirk), so we
   swallow that and return False.
   """
   try:
@@ -67,7 +68,7 @@ def require_max_graph() -> object:
 
 
 # ---------------------------------------------------------------------
-# Plan → abstract op description
+# Plan -> abstract op description
 # ---------------------------------------------------------------------
 
 
@@ -95,7 +96,7 @@ class DimClassification:
 class GraphSpec:
   """An abstract description of what `plan_to_graph(...)` would emit.
 
-  Each entry is a `(op_kind, payload)` pair. `op_kind` is a string —
+  Each entry is a `(op_kind, payload)` pair. `op_kind` is a string  - 
   `"matmul"`, `"transpose"`, `"reduce_sum"`, `"diagonal"`. The payload
   is a dict whose schema depends on the op_kind. This keeps the spec
   hashable / testable / serializable without depending on max.graph.
@@ -113,7 +114,7 @@ def classify_pair(
   """Compute the B/K/M/N split for a pairwise step.
 
   Mirrors JAX's `_einsum` algorithm. The order of each bucket follows
-  the lhs's label order for B/K/M and rhs's order for N — matches what
+  the lhs's label order for B/K/M and rhs's order for N - matches what
   numpy.einsum produces and keeps the resulting matmul shape stable.
   """
   lhs_set = set(lhs_labels)
@@ -151,27 +152,6 @@ def classify_pair(
   )
 
 
-def _intern_inputs(eq: str) -> tuple[list[str], str]:
-  """Parse `eq` into (per-operand label strings, explicit output).
-
-  No ellipsis, no broadcast, no Unicode — single-char ASCII labels
-  only. The caller validated by passing a path that came from
-  `einsum_path`, so we trust the equation syntactically.
-  """
-  if "->" in eq:
-    inputs_part, output = eq.split("->", 1)
-  else:
-    # Implicit output (numpy convention): sorted unique-non-repeated.
-    inputs_part = eq
-    counts: dict[str, int] = {}
-    for c in eq.replace(",", ""):
-      if c.isalpha():
-        counts[c] = counts.get(c, 0) + 1
-    output = "".join(sorted(c for c, k in counts.items() if k == 1))
-  operands = inputs_part.split(",")
-  return operands, output
-
-
 def plan_to_graph_spec(
   eq: str,
   shapes: list[tuple[int, ...]],
@@ -179,7 +159,7 @@ def plan_to_graph_spec(
 ) -> GraphSpec:
   """Translate `(eq, shapes, path)` into an op-by-op `GraphSpec`.
 
-  This is the spec a real `max.graph` lowering would consume — each
+  This is the spec a real `max.graph` lowering would consume - each
   entry is the kind + parameters of a single graph op. Independent of
   `max.graph` itself; tests can validate the structure without the
   package installed.
@@ -191,114 +171,33 @@ def plan_to_graph_spec(
     - unary steps in `path` are passed through; reduce-out labels
       become `"reduce_sum"` ops
   """
-  operands, final_output = _intern_inputs(eq)
-  if any("." in o for o in operands) or "." in final_output:
-    raise ValueError("plan_to_graph_spec does not support ellipsis")
+  from . import _native  # noqa: PLC0415
 
-  working_labels: list[str] = list(operands)
-  spec = GraphSpec()
-  step_idx = 0
-  for step in path:
-    if len(step) == 1:
-      (idx,) = step
-      labels = working_labels[idx]
-      # Future labels: the final output plus labels still in *other*
-      # working entries.
-      future: set[str] = set(final_output)
-      for j, w in enumerate(working_labels):
-        if j != idx:
-          future.update(w)
-      # Repeated-label collapse → diagonal.
-      seen: dict[str, int] = {}
-      has_repeat = False
-      for c in labels:
-        seen[c] = seen.get(c, 0) + 1
-        if seen[c] > 1:
-          has_repeat = True
-      if has_repeat:
-        spec.ops.append((
-          "diagonal",
-          {
-            "step": step_idx,
-            "operand": idx,
-            "src_labels": labels,
-            "dst_labels": "".join(dict.fromkeys(labels)),
-          },
-        ))
-        labels = "".join(dict.fromkeys(labels))
+  # Mojo raises `Error` which the std.python bindings surface as a bare
+  # `Exception` (not RuntimeError). Catch broadly and re-raise the one
+  # user-actionable subset (ellipsis) as ValueError so callers can pin a
+  # narrow except clause.
+  try:
+    raw = _native.max_graph_spec(eq, shapes, path)
+  except Exception as exc:
+    if "does not support ellipsis" in str(exc):
+      raise ValueError("plan_to_graph_spec does not support ellipsis") from exc
+    raise
 
-      # Reduce-out any labels not in `future`.
-      survived = "".join(c for c in labels if c in future)
-      if survived != labels:
-        spec.ops.append((
-          "reduce_sum",
-          {
-            "step": step_idx,
-            "operand": idx,
-            "src_labels": labels,
-            "dst_labels": survived,
-          },
-        ))
-        labels = survived
+  ops: list[tuple[str, dict[str, object]]] = []
+  raw_ops = cast("list[tuple[str, dict[str, object]]]", raw["ops"])
+  for kind, payload in raw_ops:
+    normalized = dict(payload)
+    for key in ("batch", "contract", "free_lhs", "free_rhs"):
+      if key in normalized:
+        normalized[key] = tuple(cast("list[str]", normalized[key]))
+    ops.append((kind, normalized))
 
-      working_labels[idx] = labels
-      step_idx += 1
-      continue
-
-    li, ri = cast("tuple[int, int]", step)
-    lhs = working_labels[li]
-    rhs = working_labels[ri]
-
-    # Output labels for this step: those in `final_output` plus those
-    # appearing in any other still-pending operand.
-    future = set(final_output)
-    for j, w in enumerate(working_labels):
-      if j != li and j != ri:
-        future.update(w)
-    out_labels = "".join(dict.fromkeys(c for c in (lhs + rhs) if c in future))
-
-    cls = classify_pair(lhs, rhs, out_labels)
-    spec.ops.append((
-      "matmul",
-      {
-        "step": step_idx,
-        "lhs": li,
-        "rhs": ri,
-        "lhs_labels": lhs,
-        "rhs_labels": rhs,
-        "out_labels": out_labels,
-        "batch": cls.batch,
-        "contract": cls.contract,
-        "free_lhs": cls.free_lhs,
-        "free_rhs": cls.free_rhs,
-      },
-    ))
-
-    # Pop li, ri; append the intermediate.
-    new_working: list[str] = [w for j, w in enumerate(working_labels) if j != li and j != ri]
-    new_working.append(out_labels)
-    working_labels = new_working
-    step_idx += 1
-
-  # The output of the final step may differ from `final_output` in
-  # axis order — emit a trailing transpose if so.
-  if len(working_labels) == 1 and working_labels[0] != final_output:
-    spec.ops.append((
-      "transpose",
-      {
-        "step": step_idx,
-        "src_labels": working_labels[0],
-        "dst_labels": final_output,
-      },
-    ))
-    step_idx += 1
-
-  spec.result_index = step_idx - 1
-  return spec
+  return GraphSpec(ops=ops, result_index=int(cast("int", raw["result_index"])))
 
 
 # ---------------------------------------------------------------------
-# MaxGraphBackend — only callable when max.graph is installed
+# MaxGraphBackend - only callable when max.graph is installed
 # ---------------------------------------------------------------------
 
 
@@ -306,14 +205,13 @@ class MaxGraphBackend:
   """Lifts a `(eq, shapes, path)` triple to a MAX graph and executes it.
 
   `__init__()` validates that `max.graph` is importable. Per-call
-  execution is `execute(eq, shapes, path, operands)` — the same
+  execution is `execute(eq, shapes, path, operands)` - the same
   signature any future native backend will land on.
 
-  v0.1 status: shipped only as far as the test harness can verify it.
-  The plan-to-graph translation (`plan_to_graph_spec`) is real and
-  tested; the `max.graph`-side codegen is gated on `max.graph` being
-  installed and produces a compiled callable that matches the
-  reference backend on the test corpus.
+  v0.1 status: executable for the same BMM-lowerable subset as
+  `backend="max"`. The plan-to-graph translation
+  (`plan_to_graph_spec`) is Mojo-owned and tested; the actual graph
+  object construction still uses MAX's Python API.
   """
 
   def __init__(self) -> None:
@@ -338,15 +236,9 @@ class MaxGraphBackend:
     shapes: list[tuple[int, ...]],
     path: list[tuple[int, ...]],
     operands: list[object],
-  ) -> object:  # pragma: no cover — exercised only when max.graph is installed
-    """Run the plan via `max.graph`.
+  ) -> object:  # pragma: no cover - exercised only when max.graph is installed
+    """Run the plan via the executable MAX Graph bridge."""
+    _ = shapes
+    from ._max_backend import execute_max  # noqa: PLC0415
 
-    Not implemented in v0.1 — the spec is ready for the codegen pass,
-    which lands when there's a real workload to validate against.
-    """
-    _ = (eq, shapes, path, operands)
-    raise NotImplementedError(
-      "MaxGraphBackend.execute(...) will land alongside the MAX-side "
-      "codegen pass. plan_to_graph_spec(...) is the documented seam "
-      "between this module and the future implementation."
-    )
+    return execute_max(eq, [np.asarray(op) for op in operands], path, "max")

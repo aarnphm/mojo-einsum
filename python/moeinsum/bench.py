@@ -1,4 +1,4 @@
-"""Benchmark CLI — `moeinsum-bench` (or `python -m moeinsum.bench`).
+"""Benchmark CLI - `moeinsum-bench` (or `python -m moeinsum.bench`).
 
 Emits per-step timing as JSON. Runs each measurement N times, reports
 the median (robust to GC pauses), min, and max.
@@ -99,7 +99,7 @@ _COMPARE_ENGINE_ALIASES = {
 
 
 def _parse_shapes(shape_strs: list[str]) -> list[tuple[int, ...]]:
-  """`["3,4,5", "5,6"]` → `[(3,4,5), (5,6)]`."""
+  """`["3,4,5", "5,6"]` -> `[(3,4,5), (5,6)]`."""
   out = []
   for s in shape_strs:
     parts = [p.strip() for p in s.split(",") if p.strip()]
@@ -332,8 +332,8 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument(
     "--backend",
     default="reference",
-    choices=["reference"],
-    help="Execution backend (only 'reference' in v0.1)",
+    choices=["reference", "max", "max:cpu", "max:gpu", "max_graph"],
+    help="Execution backend",
   )
   p.add_argument(
     "--optimize",
@@ -383,11 +383,11 @@ def main(argv: list[str] | None = None) -> int:
     "--cache-bench",
     action="store_true",
     help=(
-      "Pin plan §3 ('hot-path latency dominated by backend execute()') "
+      "Pin plan Section 3 ('hot-path latency dominated by backend execute()') "
       "numerically. Clears PLAN_CACHE, times one cold call, then "
       "--repeats hot calls; emits cold_ms, hot_ms_median, "
       "cache_speedup_ratio. Hot/cold ratio < 1 means the JIT cache "
-      "isn't saving anything — investigate."
+      "isn't saving anything - investigate."
     ),
   )
   progress = p.add_mutually_exclusive_group()
@@ -531,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     result["hot_ms_median"] = hot_median
     result["hot_ms_min"] = min(hot_timings)
     result["hot_ms_max"] = max(hot_timings)
-    # Round to 3dp — anything past that is noise on perf_counter.
+    # Round to 3dp - anything past that is noise on perf_counter.
     result["cache_speedup_ratio"] = round(cold_ms / hot_median, 3) if hot_median > 0 else 0.0
 
   if compare_engines:

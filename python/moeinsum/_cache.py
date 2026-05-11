@@ -14,8 +14,8 @@ now the cache wraps the Python-visible work; it's still ~10x faster on
 repeated calls vs. cold-cache for small inputs.
 
 LRU eviction with a configurable size cap. Default 512 entries is enough
-for any realistic ML workload — a model with 100 distinct einsum
-call-sites × 5 dtype/shape variants is the upper bound.
+for any realistic ML workload - a model with 100 distinct einsum
+call-sites x 5 dtype/shape variants is the upper bound.
 """
 
 from __future__ import annotations

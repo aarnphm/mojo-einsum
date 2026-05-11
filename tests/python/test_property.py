@@ -1,17 +1,17 @@
 """Hypothesis-driven property tests.
 
 These supplement the curated parity / unit suite by sweeping the
-parameter space — equation shapes, operand permutations, label sizes,
+parameter space - equation shapes, operand permutations, label sizes,
 optimizer choice. The goal is *invariants*, not specific cases:
 
   - parser determinism + idempotency
-  - path validity (working-set semantics: n operands → n-1 pairwise steps)
-  - optimizer ordering (optimal FLOPs ≤ branch-all FLOPs ≤ greedy FLOPs
+  - path validity (working-set semantics: n operands -> n-1 pairwise steps)
+  - optimizer ordering (optimal FLOPs <= branch-all FLOPs <= greedy FLOPs
     on the same equation, modulo ties)
   - kernel-side invariants (transpose involution, outer-product structure,
     full-sum reduction)
-  - numpy parity over a constrained equation generator (n ≤ 4, dims ≤ 6)
-  - cache determinism — repeated planner calls return identical paths
+  - numpy parity over a constrained equation generator (n <= 4, dims <= 6)
+  - cache determinism - repeated planner calls return identical paths
 
 The strategies stay narrow on purpose. Hypothesis is good at finding
 edge cases inside a well-defined space; we don't want it generating
@@ -32,7 +32,7 @@ from hypothesis import strategies as st
 from moeinsum._cost import path_cost
 
 # ---------------------------------------------------------------------
-# Strategies — well-formed equation pieces
+# Strategies - well-formed equation pieces
 # ---------------------------------------------------------------------
 
 # Lowercase ASCII pool, kept narrow so distinct-label collisions show up
@@ -64,7 +64,7 @@ def equations(
   """Generate `(equation_string, shapes)` where every label has a single
   consistent size and the output is the implicit (sorted-unique-non-
   repeated) NumPy convention. Returns the equation in the form
-  `"ab,bc->ac"` style — explicit output, no ellipsis, no repeated
+  `"ab,bc->ac"` style - explicit output, no ellipsis, no repeated
   labels within an operand."""
   n_operands = draw(st.integers(min_value=min_operands, max_value=max_operands))
 
@@ -89,7 +89,7 @@ def equations(
 
 
 # ---------------------------------------------------------------------
-# Parser — determinism + structural invariants
+# Parser - determinism + structural invariants
 # ---------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ def test_parser_label_counts_consistent(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
   """`n_labels` equals the size of the union of label-ints across
-  inputs ∪ output."""
+  inputs cup output."""
   eq, _ = case
   ir = moeinsum.parse_equation(eq)
   inputs = cast("list[list[int]]", ir["inputs"])
@@ -123,7 +123,7 @@ def test_parser_label_counts_consistent(
 
 
 # ---------------------------------------------------------------------
-# Path validity — working-set semantics
+# Path validity - working-set semantics
 # ---------------------------------------------------------------------
 
 
@@ -145,7 +145,7 @@ def test_path_satisfies_working_set_semantics(
   n = len(shapes)
   path = moeinsum.einsum_path(eq, *shapes, optimize=optimize)
 
-  # No unary steps in compute_path output — only pairwise.
+  # No unary steps in compute_path output - only pairwise.
   assert all(len(step) == 2 for step in path)
   assert len(path) == n - 1, f"expected {n - 1} pairwise steps, got {len(path)}"
 
@@ -159,7 +159,7 @@ def test_path_satisfies_working_set_semantics(
 
 
 # ---------------------------------------------------------------------
-# Optimizer ordering — optimal ≤ branch-all ≤ greedy on FLOPs
+# Optimizer ordering - optimal <= branch-all <= greedy on FLOPs
 # ---------------------------------------------------------------------
 
 
@@ -168,7 +168,7 @@ def test_path_satisfies_working_set_semantics(
 def test_optimal_flops_le_greedy(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
-  """`optimal` must produce a path with FLOP count ≤ `greedy`'s.
+  """`optimal` must produce a path with FLOP count <= `greedy`'s.
 
   Skip cases that exercise the path-cost helper's known limitations
   (repeated labels within an operand and so on)."""
@@ -191,7 +191,7 @@ def test_branch_all_flops_le_greedy(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
   """`branch-all` DFS is seeded by greedy and only updates the bound
-  downward, so it must produce ≤ greedy FLOPs."""
+  downward, so it must produce <= greedy FLOPs."""
   eq, shapes = case
   try:
     greedy = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
@@ -217,7 +217,7 @@ def test_einsum_path_is_idempotent(
   optimize: str,
 ) -> None:
   """Same `(eq, shapes, optimize)` must return an identical path on
-  every call. Hot path → LRU hit; cold path → recompute. Both must
+  every call. Hot path -> LRU hit; cold path -> recompute. Both must
   agree."""
   eq, shapes = case
   p1 = moeinsum.einsum_path(eq, *shapes, optimize=optimize)
@@ -226,7 +226,7 @@ def test_einsum_path_is_idempotent(
 
 
 # ---------------------------------------------------------------------
-# Numerical parity — random equations vs numpy
+# Numerical parity - random equations vs numpy
 # ---------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def test_numpy_parity_random_equations(
   match numpy.einsum within atol=1e-9.
 
   We skip pathological cases where numpy itself raises (e.g. a label
-  appears in the output but not the inputs — our generator only emits
+  appears in the output but not the inputs - our generator only emits
   the implicit output so that shouldn't happen, but a defensive skip
   keeps the test focused on positive cases)."""
   eq, shapes = case
@@ -275,7 +275,7 @@ def test_double_transpose_is_identity(rank: int, seed: int) -> None:
   x = rng.standard_normal(shape)
 
   src = string.ascii_lowercase[:rank]
-  # reverse — guaranteed non-trivial permutation for rank ≥ 2.
+  # reverse - guaranteed non-trivial permutation for rank >= 2.
   dst = src[::-1]
   eq_fwd = f"{src}->{dst}"
   eq_back = f"{dst}->{src}"
@@ -337,7 +337,7 @@ def test_explicit_path_round_trip(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
   """A path emitted by `einsum_path(optimize="greedy")` must validate
-  cleanly when fed back as an explicit path — the validator accepts
+  cleanly when fed back as an explicit path - the validator accepts
   exactly what the planner emits."""
   eq, shapes = case
   greedy_path = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
@@ -438,8 +438,8 @@ def test_einsum_preserves_input_dtype(
   shape_pair: tuple[int, int, int],
   seed: int,
 ) -> None:
-  """For matched-dtype inputs `einsum` returns the same dtype. fp32/fp32 →
-  fp32, int64/int64 → int64, etc."""
+  """For matched-dtype inputs `einsum` returns the same dtype. fp32/fp32 ->
+  fp32, int64/int64 -> int64, etc."""
   m, k, n = shape_pair
   rng = np.random.default_rng(seed)
   if np.issubdtype(dtype, np.integer):
@@ -463,8 +463,8 @@ def test_einsum_promotes_via_result_type(
   dtype_b: np.dtype,
   seed: int,
 ) -> None:
-  """Mixed-dtype inputs land on `np.result_type(a, b)` — the same
-  promotion rule numpy uses everywhere else. fp32+fp64 → fp64."""
+  """Mixed-dtype inputs land on `np.result_type(a, b)` - the same
+  promotion rule numpy uses everywhere else. fp32+fp64 -> fp64."""
   rng = np.random.default_rng(seed)
   a = rng.standard_normal((3, 4)).astype(dtype_a)
   b = rng.standard_normal((4, 5)).astype(dtype_b)
@@ -484,7 +484,7 @@ def test_branch_2_le_greedy(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
   """`branch-2` keeps the top-2 candidates per level, so it explores
-  at least as much as `branch-1` ≡ greedy. FLOPs must be ≤ greedy."""
+  at least as much as `branch-1` == greedy. FLOPs must be <= greedy."""
   eq, shapes = case
   try:
     greedy = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
@@ -501,7 +501,7 @@ def test_branch_2_le_greedy(
 def test_auto_le_naive(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
-  """`auto` must be at least as good as `naive` — picking the worst
+  """`auto` must be at least as good as `naive` - picking the worst
   obvious path is the floor."""
   eq, shapes = case
   try:
@@ -527,7 +527,7 @@ def test_einsum_deterministic_bit_equal(
   case: tuple[str, list[tuple[int, ...]]],
 ) -> None:
   """`deterministic=True` (the default) must produce bit-identical
-  results across repeat calls — the reference backend is single-threaded
+  results across repeat calls - the reference backend is single-threaded
   scalar so this is the trivial case, but the contract is what callers
   will rely on against MaxBackend's threaded reduction."""
   eq, shapes = case
@@ -575,7 +575,7 @@ def test_size_one_matmul_matches_numpy(seed: int) -> None:
   seed=st.integers(min_value=0, max_value=2**31 - 1),
 )
 def test_size_one_full_axes_matches_numpy(seed: int) -> None:
-  """Operand with every dim of size 1 — degenerate case that historically
+  """Operand with every dim of size 1 - degenerate case that historically
   trips numpy.einsum reshape paths."""
   rng = np.random.default_rng(seed)
   a = rng.standard_normal((1, 1, 1))
@@ -596,7 +596,7 @@ def test_size_one_full_axes_matches_numpy(seed: int) -> None:
   seed=st.integers(min_value=0, max_value=2**31 - 1),
 )
 def test_int_matmul_bit_exact(m: int, k: int, n: int, seed: int) -> None:
-  """Integer matmul must match `a @ b` bit-exactly — no fp rounding
+  """Integer matmul must match `a @ b` bit-exactly - no fp rounding
   excuse. Catches any subtle truncate-on-cast in the FFI fp64 detour."""
   rng = np.random.default_rng(seed)
   a = rng.integers(-5, 6, size=(m, k), dtype=np.int64)

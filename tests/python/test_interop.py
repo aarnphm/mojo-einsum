@@ -45,7 +45,7 @@ def test_to_numpy_explicit_dtype() -> None:
 
 def test_to_numpy_from_python_list() -> None:
   out = to_numpy([[1, 2], [3, 4]])
-  # numpy infers int64 from a list of ints — we preserve that.
+  # numpy infers int64 from a list of ints - we preserve that.
   assert out.dtype == np.int64
   assert out.shape == (2, 2)
 
@@ -115,27 +115,27 @@ def test_einsum_torch_dlpack() -> None:
   a = _torch.eye(3, dtype=_torch.float64)
   b = _torch.eye(3, dtype=_torch.float64) * 2.0
   out = moeinsum.einsum("ij,jk->ik", a, b)
-  # torch in → torch out.
+  # torch in -> torch out.
   assert isinstance(out, _torch.Tensor)
   np.testing.assert_allclose(np.asarray(out), np.eye(3) * 2.0)
 
 
 @pytest.mark.skipif(_jax is None, reason="jax not installed")
 def test_einsum_jax_dlpack() -> None:
-  """jax in → jax out via DLPack.
+  """jax in -> jax out via DLPack.
 
   Note: jax demotes `dtype="float64"` to fp32 unless JAX_ENABLE_X64=1.
-  That's expected jax behavior, not a bug in this layer — the test
+  That's expected jax behavior, not a bug in this layer - the test
   builds operands with whatever dtype jax actually allocates.
   Pre-fix, `source_kind` returned "other" for jax arrays (their type
   module is `jaxlib._jax`, not `jax`), so the round-trip collapsed to
-  numpy. Fixed by aliasing `jaxlib` → `jax` in `_MODULE_ALIASES`.
+  numpy. Fixed by aliasing `jaxlib` -> `jax` in `_MODULE_ALIASES`.
   """
   assert _jax is not None
   a = _jax.numpy.eye(3)
   b = _jax.numpy.eye(3) * 3.0
   out = moeinsum.einsum("ij,jk->ik", a, b)
-  # jax in → jax out. type(out).__module__ is "jaxlib._jax" — startswith
+  # jax in -> jax out. type(out).__module__ is "jaxlib._jax" - startswith
   # "jax" is satisfied either way.
   assert type(out).__module__.startswith("jax")
   np.testing.assert_allclose(np.asarray(out), np.eye(3) * 3.0)
@@ -148,7 +148,7 @@ def test_einsum_mlx_dlpack() -> None:
   a = mx.eye(3, dtype=mx.float32)
   b = mx.eye(3, dtype=mx.float32) * 4.0
   out = moeinsum.einsum("ij,jk->ik", a, b)
-  # mlx in → mlx out.
+  # mlx in -> mlx out.
   assert type(out).__module__.startswith("mlx")
   np.testing.assert_allclose(np.asarray(out), np.eye(3) * 4.0, atol=1e-6)
 

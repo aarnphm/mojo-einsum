@@ -1,13 +1,13 @@
 """MAX-kernels backend (skeleton).
 
 Consumes a `ContractionPlan` and dispatches each step to MAX's kernel
-library — `linalg.batched_matmul` for two-operand BMM-lowered steps, and
+library - `linalg.batched_matmul` for two-operand BMM-lowered steps, and
 the unary kernels from `einsum.unary` for single-operand steps. This is
 the *default* backend for the public API; it inherits CPU, SM90, SM100,
 and Apple-Silicon dispatch from MAX, so we don't write platform-specific
 code at this layer.
 
-The plumbing currently isn't wired into the FFI — `src/lib.mojo` still
+The plumbing currently isn't wired into the FFI - `src/lib.mojo` still
 passes flat-list operands to the reference backend. The Phase 5 work
 that unblocks this:
 
@@ -21,14 +21,14 @@ that unblocks this:
   4. The output is permuted via `out_permutation` to `out_labels` order.
 
 For `all_dims_known=False` operands (the common DLPack case), we fall
-back to TTGT — materialize the permutation into a fresh
+back to TTGT - materialize the permutation into a fresh
 `OwnedPointer`-allocated buffer before the matmul. The native backend's
 GETT path (Phase 11/12) avoids this materialization.
 
 This file is intentionally a structural skeleton: the function shapes,
 the dispatch logic, and the comments are correct, but the kernel calls
 are stubbed until the FFI side is upgraded. See `docs/derivations.md`
-§1 for the BMM-lowering math, §3 for GETT, §6 for output-permutation
+Section 1 for the BMM-lowering math, Section 3 for GETT, Section 6 for output-permutation
 choice.
 """
 
@@ -68,7 +68,7 @@ def execute_max(
     replaces its operand in place. The final working-set element is the
     overall result, which we write into `out_ptr`.
 
-    For v0.1 the backend is a structural stub — it routes to the
+    For v0.1 the backend is a structural stub - it routes to the
     reference backend for now. The MAX-kernel dispatch lands when the
     FFI accepts TileTensor handles (Phase 5).
     """
@@ -98,7 +98,7 @@ def execute_max(
 #     #    If the natural memory order already matches, zero-copy.
 #     #    Otherwise materialize via TTGT.
 #     #
-#     # 2. Same for rhs → (*B, *K, *N).
+#     # 2. Same for rhs -> (*B, *K, *N).
 #     #
 #     # 3. Dispatch:
 #     #
@@ -113,7 +113,7 @@ def execute_max(
 #     #
 #     # Note: JAX's trick (lax_numpy.py:3288-3300) of trying both
 #     # (lhs, rhs) and (rhs, lhs) orderings to avoid the output permute
-#     # is a one-line optimization here — check whether the BMM-natural
+#     # is a one-line optimization here - check whether the BMM-natural
 #     # order matches out_labels, and if not, retry with swapped operands.
 
 
@@ -131,17 +131,17 @@ def execute_max(
 #     # Compose layout-only transformations where possible, materialize
 #     # only when we hit a reduction.
 #     if step.kind == UNARY_TRANSPOSE:
-#         # Pure layout permutation — write metadata, no copy.
+#         # Pure layout permutation - write metadata, no copy.
 #         transpose_view(...)
 #     elif step.kind == UNARY_DIAGONAL:
-#         # Stride summation — write metadata, no copy.
+#         # Stride summation - write metadata, no copy.
 #         diagonal_view(..., step.diag_axes, ...)
 #     elif step.kind == UNARY_REDUCE_SUM:
 #         # Allocate output, call reduce_sum_axes.
 #         reduce_sum_axes(in_buf, in_shape, in_strides, step.reduce_axes,
 #                         out_buf, out_strides)
 #     elif step.kind == UNARY_TRACE:
-#         # Compose diagonal_view → reduce_sum_axes (NumPy's pattern).
+#         # Compose diagonal_view -> reduce_sum_axes (NumPy's pattern).
 #         var mid_shape = List[Int]()
 #         var mid_strides = List[Int]()
 #         diagonal_view(in_shape, in_strides, step.diag_axes,

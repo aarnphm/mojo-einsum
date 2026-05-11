@@ -6,8 +6,8 @@ inside the same process miss (e.g. broken `argparse` choices, broken
 script entry, broken JSON dump).
 
 Two invocation paths are validated:
-  - `python -m moeinsum.bench …`
-  - `moeinsum-bench …` (the `[project.scripts]` entry installed by
+  - `python -m moeinsum.bench ...`
+  - `moeinsum-bench ...` (the `[project.scripts]` entry installed by
     `pip install -e .`)
 
 These tests do real subprocess work and add ~3-5s to the suite. If
@@ -44,7 +44,7 @@ def _bench_args(equation: str, shapes: list[str], **extra: object) -> list[str]:
 
 def _run(*argv: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
   env = os.environ.copy()
-  # Carry DYLD_LIBRARY_PATH through — conftest.py sets it but only at
+  # Carry DYLD_LIBRARY_PATH through - conftest.py sets it but only at
   # pytest import time; subprocess starts fresh.
   for path in (
     "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_UKGEN",
@@ -68,9 +68,9 @@ def _parse_json(stdout: str) -> dict[str, object]:
   return json.loads(stdout)
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # `python -m moeinsum.bench` entry
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_module_entry_single_optimizer() -> None:
@@ -106,7 +106,7 @@ def test_module_entry_with_include_path() -> None:
   assert proc.returncode == 0
   rec = _parse_json(proc.stdout)
   assert "path" in rec
-  # 3 operands → 2 pairwise steps.
+  # 3 operands -> 2 pairwise steps.
   assert len(rec["path"]) == 2
 
 
@@ -172,7 +172,7 @@ def test_module_entry_cache_bench() -> None:
   """`--cache-bench` clears PLAN_CACHE, times one cold call, then times
   --repeats hot calls; result must carry cold_ms, hot_ms_median, and
   cache_speedup_ratio (a positive float). The actual ratio is too
-  noisy to assert tightly — we just check the schema and that the
+  noisy to assert tightly - we just check the schema and that the
   ratio is finite."""
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], cache_bench=True)
   proc = _run(_python(), "-m", "moeinsum.bench", *args)
@@ -209,9 +209,9 @@ def test_module_entry_invalid_equation() -> None:
   assert proc.returncode != 0
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # `moeinsum-bench` script entry (from [project.scripts])
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 @pytest.mark.skipif(

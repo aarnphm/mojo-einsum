@@ -18,7 +18,7 @@ def test_matmul_chain_path_cost_matches_path_choice() -> None:
 
   # Optimal should be at least 100x cheaper in FLOPs and 10^5x cheaper
   # in peak intermediate memory. (The docs round to "10^7x" because
-  # they include the 1×1 scalar intermediate; this number is from
+  # they include the 1x1 scalar intermediate; this number is from
   # actual computed ratios.)
   ratio_flops = naive_cost["total_flops"] / optimal_cost["total_flops"]
   ratio_peak = naive_cost["peak_intermediate"] / optimal_cost["peak_intermediate"]
@@ -60,7 +60,7 @@ def test_single_operand_unary_cost() -> None:
 
 
 def test_matmul_flops_M_K_N() -> None:
-  """`ij,jk->ik` for (M, K) × (K, N): exactly M*K*N FLOPs, peak = M*N."""
+  """`ij,jk->ik` for (M, K) x (K, N): exactly M*K*N FLOPs, peak = M*N."""
   eq = "ij,jk->ik"
   m, k, n = 3, 5, 4
   cost = moeinsum.path_cost(eq, [(m, k), (k, n)], [(0, 1)])
@@ -69,7 +69,7 @@ def test_matmul_flops_M_K_N() -> None:
 
 
 def test_bmm_flops_B_M_K_N() -> None:
-  """`bij,bjk->bik` over (B, M, K) × (B, K, N): B*M*K*N FLOPs."""
+  """`bij,bjk->bik` over (B, M, K) x (B, K, N): B*M*K*N FLOPs."""
   eq = "bij,bjk->bik"
   b, m, k, n = 2, 3, 5, 4
   cost = moeinsum.path_cost(eq, [(b, m, k), (b, k, n)], [(0, 1)])
@@ -78,17 +78,17 @@ def test_bmm_flops_B_M_K_N() -> None:
 
 
 def test_three_way_outer_product_flops() -> None:
-  """`i,j,k->ijk` with greedy/optimal pairing — first pair is i,j → ij
-  (cost I*J), second is ij,k → ijk (cost I*J*K). Total = I*J + I*J*K."""
+  """`i,j,k->ijk` with greedy/optimal pairing - first pair is i,j -> ij
+  (cost I*J), second is ij,k -> ijk (cost I*J*K). Total = I*J + I*J*K."""
   eq = "i,j,k->ijk"
   size_i, size_j, size_k = 2, 3, 4
   path = moeinsum.einsum_path(eq, (size_i,), (size_j,), (size_k,), optimize="greedy")
   cost = moeinsum.path_cost(eq, [(size_i,), (size_j,), (size_k,)], path)
   # The pair order may vary but the total cost is shape-dependent.
-  # Greedy on (i=2, j=3, k=4) picks the cheapest first pair —
+  # Greedy on (i=2, j=3, k=4) picks the cheapest first pair  - 
   # we check the formula holds for whichever ordering it chose.
   assert cost["total_flops"] >= size_i * size_j  # at least the cheapest first step
-  assert cost["peak_intermediate"] == size_i * size_j * size_k  # 24 — final output
+  assert cost["peak_intermediate"] == size_i * size_j * size_k  # 24 - final output
 
 
 def test_frobenius_inner_product_flops() -> None:
@@ -128,7 +128,7 @@ def test_path_cost_sum_of_step_flops_equals_total() -> None:
     path = moeinsum.einsum_path(eq, *shapes, optimize="optimal")
     cost = moeinsum.path_cost(eq, shapes, path)
     step_sum = sum(s["flops"] for s in cost["steps"])
-    assert step_sum == cost["total_flops"], f"step-sum {step_sum} ≠ total {cost['total_flops']} for {eq!r}"
+    assert step_sum == cost["total_flops"], f"step-sum {step_sum} != total {cost['total_flops']} for {eq!r}"
 
 
 def test_path_cost_peak_is_max_of_step_outputs() -> None:

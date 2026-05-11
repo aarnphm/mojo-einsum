@@ -1,7 +1,7 @@
 """JAX einsum-corpus parity (mirrors `~/workspace/jax/tests/lax_numpy_einsum_test.py`).
 
 This is the P6 acceptance gate the plan calls for: "Tests against full
-JAX einsum test suite (target ≥80% case parity)." The corpus mirrors
+JAX einsum test suite (target >=80% case parity)." The corpus mirrors
 JAX's hand-authored test cases plus the parametrized dask-derived list
 JAX inherits from `https://github.com/dask/dask/pull/3412`.
 
@@ -14,8 +14,8 @@ Cases cover:
   - rank-6 dense contractions (`abcdef,bcdfg->abcdeg`)
 
 Every case runs numpy.einsum with optimize=True as the oracle. atol=1e-9
-on fp64 — the reference backend uses scalar reductions so we don't pay
-the bf16 √K drift.
+on fp64 - the reference backend uses scalar reductions so we don't pay
+the bf16 sqrtK drift.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ import moeinsum
 import numpy as np
 import pytest
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # JAX hand-authored cases (lax_numpy_einsum_test.py:40-218)
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 # Format: (label, equation, [(shape, ...)]). The label keeps pytest's
 # parametrize IDs human-readable.
@@ -56,7 +56,7 @@ _JAX_HAND = [
   ("two_diagonals_keep_ik", "iijkk->ik", [(3, 3, 5, 4, 4)]),
   ("diag_with_reduce_il", "iijkl->il", [(3, 3, 5, 4, 4)]),
   ("identity_2d", "ij->ij", [(3, 3)]),
-  # tf-unsupported (JAX supports these — we must too)
+  # tf-unsupported (JAX supports these - we must too)
   ("trailing_ellipsis_matmul", "ij...,jk...->ik...", [(2, 3, 5, 1), (3, 4, 5, 1)]),
   ("diag_lhs_outer", "ijj,k->ik", [(2, 3, 3), (4,)]),
   ("three_op_partial_outer", "ij,ij,jk->ik", [(2, 3), (2, 3), (3, 4)]),
@@ -72,9 +72,9 @@ def test_jax_hand_corpus(label: str, eq: str, shapes: list[tuple[int, ...]]) -> 
   np.testing.assert_allclose(actual, expected, atol=1e-9, rtol=1e-9)
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # JAX dask-derived corpus (lax_numpy_einsum_test.py:220-256)
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def _shapes_for(eq: str) -> list[tuple[int, ...]]:
@@ -152,9 +152,9 @@ def test_jax_dask_corpus_fp64(eq: str) -> None:
   np.testing.assert_allclose(actual, expected, atol=1e-9, rtol=1e-9)
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Integer-dtype subset (bit-exact)
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 _INT_SAFE_EQUATIONS = [

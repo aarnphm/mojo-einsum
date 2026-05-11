@@ -5,8 +5,8 @@ Run with:
 
 `tests/mojo/smoke_path_cost.mojo` already pins the cost helpers
 (`_flop_cost`, `_reduced_size_cost`). This file plugs the gap between
-those unit tests and `smoke_parse.mojo`'s n ≤ 4 path checks — it runs
-the planner glue end-to-end on n ∈ {12, 16, 20} matrix chains across
+those unit tests and `smoke_parse.mojo`'s n <= 4 path checks - it runs
+the planner glue end-to-end on n in {12, 16, 20} matrix chains across
 the algorithm family and asserts the returned path is well-formed.
 
 What "well-formed" means here:
@@ -16,12 +16,12 @@ What "well-formed" means here:
     step consumes two operands and appends one intermediate)
   - `lhs_idx != rhs_idx` (no self-pairing)
 
-It deliberately does *not* assert path optimality — that's covered by
+It deliberately does *not* assert path optimality - that's covered by
 the Python side's `test_random_greedy_band.py` (random-greedy-128 within
 5% of opt_einsum DP) and `test_opt_einsum_parity.py` (greedy / optimal
 parity against opt_einsum). The Mojo smoke is here to catch the kind
 of regression where the planner returns a path with the wrong shape or
-out-of-bound indices — bugs that wouldn't survive the Python parity
+out-of-bound indices - bugs that wouldn't survive the Python parity
 suite, but might survive cost-helper unit tests.
 
 Shapes use alternating-dim chains (`16, 2, 16, 2, ...`) so the optimal
@@ -34,17 +34,17 @@ from einsum.path import compute_path, ContractionStep
 from einsum.backends.reference import _resolve_label_sizes
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Helpers
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def _alternating_shapes(n: Int) raises -> List[List[Int]]:
     """For an n-matrix chain, build shapes `[(16,2), (2,16), ...]`.
 
     The naive left-to-right path on this dim sequence pays roughly
-    n × 16² intermediates; the Bellman-optimal path pays n × 16 × 2.
-    A wide gap — useful for catching planners that secretly fall back
+    n x 16^2 intermediates; the Bellman-optimal path pays n x 16 x 2.
+    A wide gap - useful for catching planners that secretly fall back
     to naive.
     """
     var shapes = List[List[Int]]()
@@ -123,9 +123,9 @@ def _validate_path(
             )
 
 
-# ─────────────────────────────────────────────────────────────────────
-# n = 12 — greedy / auto / random-greedy / branch-1
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
+# n = 12 - greedy / auto / random-greedy / branch-1
+# ---------------------------------------------------------------------
 
 
 def check_chain_n12_algorithm_family() raises:
@@ -156,13 +156,13 @@ def check_chain_n12_algorithm_family() raises:
     print("check_chain_n12_algorithm_family: OK")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# n = 16 — push optimal (still tractable per opt_einsum's threshold)
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
+# n = 16 - push optimal (still tractable per opt_einsum's threshold)
+# ---------------------------------------------------------------------
 
 
 def check_chain_n16_with_optimal() raises:
-    """16-operand chain — at opt_einsum's optimal-DP cutoff. Verifies
+    """16-operand chain - at opt_einsum's optimal-DP cutoff. Verifies
     the planner doesn't blow up at the boundary."""
     var eq = parse(
         String(
@@ -187,15 +187,15 @@ def check_chain_n16_with_optimal() raises:
     print("check_chain_n16_with_optimal: OK")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# n = 20 — past optimal-DP's tractable range; greedy/random-greedy only
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
+# n = 20 - past optimal-DP's tractable range; greedy/random-greedy only
+# ---------------------------------------------------------------------
 
 
 def check_chain_n20_greedy_and_random_greedy() raises:
-    """20-operand chain — verifies the cheaper algorithms still produce
+    """20-operand chain - verifies the cheaper algorithms still produce
     well-formed paths at scale. Optimal-DP is intentionally skipped
-    (the n=20 subset enumeration is 2²⁰ ≈ 10⁶ states, slow enough that
+    (the n=20 subset enumeration is about 2^20, roughly 1e6 states, slow enough that
     a smoke test is the wrong venue)."""
     var eq = parse(
         String(
@@ -217,13 +217,13 @@ def check_chain_n20_greedy_and_random_greedy() raises:
     print("check_chain_n20_greedy_and_random_greedy: OK")
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Cross-algorithm consistency: branch-1 must equal greedy
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def check_branch_1_equals_greedy_on_long_chain() raises:
-    """`branch-1` is greedy with a width-1 DFS — it must produce the
+    """`branch-1` is greedy with a width-1 DFS - it must produce the
     *same* path as plain greedy on any input. Catches regressions where
     branch's tie-breaking diverges from greedy's."""
     var eq = parse(String("ab,bc,cd,de,ef,fg,gh,hi,ij,jk,kl,lm->am"))
@@ -238,7 +238,7 @@ def check_branch_1_equals_greedy_on_long_chain() raises:
             String(
                 "branch-1: step count ",
                 len(branch1),
-                " ≠ greedy ",
+                " != greedy ",
                 len(greedy),
             )
         )

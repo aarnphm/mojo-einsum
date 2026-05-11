@@ -1,4 +1,4 @@
-"""Backend stub tests — exercise the architectural seam.
+"""Backend stub tests - exercise the architectural seam.
 
 `MaxGraphBackend` is a stretch deliverable (P14). The Python-side
 plan-to-graph translation (`plan_to_graph_spec`) is real and shipped;
@@ -11,8 +11,8 @@ being installed. Tests cover:
     the canonical einsum shapes (BMM, matmul, trace, reduce, identity)
   - the dim classifier matches JAX's B/K/M/N split on hand-known cases
 
-The actual `MaxGraphBackend.execute(...)` path remains
-NotImplementedError until the codegen lands — that's a deliberate seam.
+`backend="max"` and its `max_graph` alias are executable for the
+BMM-lowerable subset through MAX Graph.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def test_require_max_graph_error_when_missing() -> None:
 
 def test_max_graph_backend_init_requires_max() -> None:
   if is_available():
-    # The real package is installed — __init__ should succeed.
+    # The real package is installed - __init__ should succeed.
     backend = MaxGraphBackend()
     assert backend is not None
   else:
@@ -101,7 +101,7 @@ def test_classify_pair_outer_product() -> None:
 
 def test_classify_pair_label_order_follows_lhs() -> None:
   """When labels appear in different orders on lhs/rhs, the bucket
-  ordering follows lhs for B/K/M and rhs for N — matches numpy.einsum.
+  ordering follows lhs for B/K/M and rhs for N - matches numpy.einsum.
   """
   # batch label `b` listed second on lhs but first on rhs.
   c = classify_pair("ab", "ba", "ab")
@@ -112,7 +112,7 @@ def test_classify_pair_label_order_follows_lhs() -> None:
 
 
 # ---------------------------------------------------------------------
-# plan_to_graph_spec — structural validation
+# plan_to_graph_spec - structural validation
 # ---------------------------------------------------------------------
 
 
@@ -176,7 +176,7 @@ def test_spec_ellipsis_unsupported() -> None:
 
 
 def test_spec_unary_identity_emits_no_ops() -> None:
-  """`ij->ij` on a 2D operand with the natural axis order — the unary
+  """`ij->ij` on a 2D operand with the natural axis order - the unary
   step has no reduce-outs, no repeats, and matches `final_output`,
   so the spec is empty."""
   spec = plan_to_graph_spec("ij->ij", [(3, 5)], [(0,)])
@@ -199,23 +199,43 @@ def test_einsum_native_backend_phase_aware_error() -> None:
     moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="native")
 
 
-def test_einsum_max_backend_phase_aware_error() -> None:
-  """`backend="max"` is planned (P5) but not wired. Same contract."""
+def test_einsum_max_backend_matmul_when_available() -> None:
+  """`backend="max:cpu"` runs through MAX Graph for the supported subset."""
   import moeinsum
   import numpy as np
 
-  with pytest.raises(NotImplementedError, match="P5"):
-    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="max")
+  if not is_available():
+    pytest.skip("max.graph not installed")
+
+  a = np.arange(12, dtype=np.float32).reshape(3, 4)
+  b = np.arange(20, dtype=np.float32).reshape(4, 5)
+  actual = moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+  np.testing.assert_allclose(actual, a @ b, atol=1e-5, rtol=1e-5)
 
 
-def test_einsum_max_graph_backend_phase_aware_error() -> None:
-  """`backend="max_graph"` is planned (P14). The plan-to-graph
-  translation is done; the codegen pass remains."""
+def test_einsum_max_backend_repeated_labels_not_supported_yet() -> None:
+  """Diagonal/trace lowering is still outside the executable MAX subset."""
   import moeinsum
   import numpy as np
 
-  with pytest.raises(NotImplementedError, match="P14"):
-    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="max_graph")
+  if not is_available():
+    pytest.skip("max.graph not installed")
+
+  with pytest.raises(NotImplementedError, match="repeated labels"):
+    moeinsum.einsum("ii->", np.eye(3, dtype=np.float32), backend="max:cpu")
+
+
+def test_einsum_max_graph_alias_when_available() -> None:
+  """`backend="max_graph"` is a compatibility alias for the MAX Graph path."""
+  import moeinsum
+  import numpy as np
+
+  if not is_available():
+    pytest.skip("max.graph not installed")
+
+  a = np.eye(3, dtype=np.float32)
+  actual = moeinsum.einsum("ij,jk->ik", a, a, backend="max_graph")
+  np.testing.assert_allclose(actual, a @ a, atol=1e-5, rtol=1e-5)
 
 
 def test_einsum_unknown_backend_value_error() -> None:

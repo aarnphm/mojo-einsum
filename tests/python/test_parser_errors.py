@@ -22,9 +22,9 @@ def _expect_parse_error(eq: str, *, fragment: str = "einsum parse error") -> Non
     moeinsum.parse_equation(eq)
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Character-class violations
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_dollar_sign_rejected() -> None:
@@ -45,16 +45,16 @@ def test_punctuation_rejected() -> None:
 
 def test_whitespace_inside_operand_is_lenient() -> None:
   """Current behaviour: whitespace inside an operand is *not* rejected
-  — the parser silently ignores it. Documented here so a future
+  - the parser silently ignores it. Documented here so a future
   strict-mode change shows up as a test deltas instead of a regression."""
   ir = moeinsum.parse_equation("i j,jk->ik")
   # i + j + k = 3 labels even with the embedded space.
   assert ir["n_labels"] == 3
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Ellipsis grammar violations
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_double_dot_rejected() -> None:
@@ -73,9 +73,9 @@ def test_ellipsis_in_middle_then_dot_rejected() -> None:
   _expect_parse_error("i...j..k->ijk")
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Arrow grammar violations
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_double_arrow_rejected() -> None:
@@ -95,13 +95,13 @@ def test_arrow_without_lhs_is_lenient() -> None:
   assert ir["has_explicit_output"] is True
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Size mismatches (parse + validate)
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_size_mismatch_caught_at_einsum() -> None:
-  """Same label with different sizes across operands must fail —
+  """Same label with different sizes across operands must fail  - 
   the constraint surfaces during einsum() execution, not parse_equation()
   (parsing is structural; size checks need operand shapes)."""
   with pytest.raises(Exception, match="size"):
@@ -114,22 +114,22 @@ def test_rank_mismatch_caught_at_einsum() -> None:
     moeinsum.einsum("ijk,jl->il", np.eye(3), np.eye(3))
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Output-label grammar
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_output_label_not_in_inputs_rejected() -> None:
-  """`ij,jk->iz` — `z` never appears in any input. Implementation
+  """`ij,jk->iz` - `z` never appears in any input. Implementation
   detail: this may pass `parse_equation` (structural) but fail at
   einsum execution time."""
   with pytest.raises(Exception):  # noqa: B017
     moeinsum.einsum("ij,jk->iz", np.eye(3), np.eye(3))
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Empty / minimal inputs
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_empty_equation_is_lenient() -> None:
@@ -151,26 +151,26 @@ def test_arrow_only_is_lenient() -> None:
 
 def test_trailing_comma_is_lenient() -> None:
   """Current behaviour: a trailing comma yields an empty third
-  operand. NumPy's parser does the same — `np.einsum('ij,jk,->ik', ...)`
+  operand. NumPy's parser does the same - `np.einsum('ij,jk,->ik', ...)`
   hits the "wrong number of operands" path."""
   ir = moeinsum.parse_equation("ij,jk,->ik")
   assert len(ir["inputs"]) == 3
   assert ir["inputs"][-1] == []
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 # Valid edge cases (should NOT raise)
-# ─────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------
 
 
 def test_single_label_single_operand_parses() -> None:
-  """`i` — implicit output is `i`. Valid grammar."""
+  """`i` - implicit output is `i`. Valid grammar."""
   ir = moeinsum.parse_equation("i")
   assert ir["n_labels"] == 1
 
 
 def test_pure_scalar_einsum_parses() -> None:
-  """`->` is an empty einsum — no operands, scalar output. Valid
+  """`->` is an empty einsum - no operands, scalar output. Valid
   grammar but the einsum call will reject for needing operands."""
   ir = moeinsum.parse_equation("->")
   assert ir["has_explicit_output"] is True
