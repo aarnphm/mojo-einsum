@@ -118,8 +118,17 @@ def test_module_entry_sweep_optimizers() -> None:
   assert "results" in rec
   assert "fastest" in rec
   assert "ratios" in rec
-  # Every standard optimizer must have run.
-  for opt in ("naive", "greedy", "optimal", "auto", "random-greedy"):
+  # Every optimizer the planner exposes must have run in sweep mode.
+  for opt in (
+    "naive",
+    "greedy",
+    "optimal",
+    "auto",
+    "random-greedy",
+    "branch-all",
+    "branch-2",
+    "branch-1",
+  ):
     assert opt in rec["results"]
     assert rec["ratios"][opt] >= 1.0  # fastest has ratio == 1.0
 

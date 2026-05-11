@@ -148,7 +148,19 @@ def main(argv: list[str] | None = None) -> int:
   }
 
   if args.sweep_optimizers:
-    optimizers = ("naive", "greedy", "optimal", "auto", "random-greedy")
+    # Cover every named optimizer the path planner exposes. `random-greedy`
+    # is the default-N variant; callers wanting `random-greedy-N` specific
+    # trial counts should run single-optimizer mode with `--optimize`.
+    optimizers = (
+      "naive",
+      "greedy",
+      "optimal",
+      "auto",
+      "random-greedy",
+      "branch-all",
+      "branch-2",
+      "branch-1",
+    )
     per_opt: dict[str, dict[str, object]] = {}
     for opt in optimizers:
       for _ in range(args.warmup):
