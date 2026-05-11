@@ -1,9 +1,18 @@
 """Backend stub tests — exercise the architectural seam.
 
-`MaxGraphBackend` is a stretch deliverable (P14). The shim exists so
-callers can detect availability and get clear error messages, not so
-they can actually run a MAX graph. These tests verify the detection /
-error surface — actual execution tests land with the P14 implementation.
+`MaxGraphBackend` is a stretch deliverable (P14). The Python-side
+plan-to-graph translation (`plan_to_graph_spec`) is real and shipped;
+the `max.graph`-side codegen is gated on the optional `max` package
+being installed. Tests cover:
+
+  - availability detection matches `importlib.util.find_spec`
+  - `__init__` raises when `max.graph` is missing
+  - `plan_to_graph_spec` produces structurally correct op lists for
+    the canonical einsum shapes (BMM, matmul, trace, reduce, identity)
+  - the dim classifier matches JAX's B/K/M/N split on hand-known cases
+
+The actual `MaxGraphBackend.execute(...)` path remains
+NotImplementedError until the codegen lands — that's a deliberate seam.
 """
 
 from __future__ import annotations
@@ -11,7 +20,17 @@ from __future__ import annotations
 import importlib
 
 import pytest
-from moeinsum._max_graph import MaxGraphBackend, is_available, require_max_graph
+from moeinsum._max_graph import (
+  MaxGraphBackend,
+  classify_pair,
+  is_available,
+  plan_to_graph_spec,
+  require_max_graph,
+)
+
+# ─────────────────────────────────────────────────────────────────────
+# Availability + error surface
+# ─────────────────────────────────────────────────────────────────────
 
 
 def test_is_available_matches_import_spec() -> None:
@@ -22,13 +41,143 @@ def test_is_available_matches_import_spec() -> None:
   assert is_available() is spec_present
 
 
-def test_max_graph_backend_init_raises_not_implemented() -> None:
-  with pytest.raises(NotImplementedError, match="P14"):
-    MaxGraphBackend()
-
-
 def test_require_max_graph_error_when_missing() -> None:
   if is_available():
     pytest.skip("max.graph installed; cannot test the missing-dep path")
   with pytest.raises(ImportError, match="MaxGraphBackend requires"):
     require_max_graph()
+
+
+def test_max_graph_backend_init_requires_max() -> None:
+  if is_available():
+    # The real package is installed — __init__ should succeed.
+    backend = MaxGraphBackend()
+    assert backend is not None
+  else:
+    with pytest.raises(ImportError, match="MaxGraphBackend requires"):
+      MaxGraphBackend()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Dim classification (JAX-mirroring)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_classify_pair_matmul() -> None:
+  """`ij,jk->ik`: free_lhs=[i], contract=[j], free_rhs=[k], batch=[]."""
+  c = classify_pair("ij", "jk", "ik")
+  assert c.batch == ()
+  assert c.contract == ("j",)
+  assert c.free_lhs == ("i",)
+  assert c.free_rhs == ("k",)
+
+
+def test_classify_pair_batched_matmul() -> None:
+  """`bij,bjk->bik`: batch=[b], contract=[j], free_lhs=[i], free_rhs=[k]."""
+  c = classify_pair("bij", "bjk", "bik")
+  assert c.batch == ("b",)
+  assert c.contract == ("j",)
+  assert c.free_lhs == ("i",)
+  assert c.free_rhs == ("k",)
+
+
+def test_classify_pair_frobenius() -> None:
+  """`ij,ij->`: contract=[i, j], free=[], batch=[]."""
+  c = classify_pair("ij", "ij", "")
+  assert c.batch == ()
+  assert c.contract == ("i", "j")
+  assert c.free_lhs == ()
+  assert c.free_rhs == ()
+
+
+def test_classify_pair_outer_product() -> None:
+  """`i,j->ij`: contract=[], free_lhs=[i], free_rhs=[j]."""
+  c = classify_pair("i", "j", "ij")
+  assert c.batch == ()
+  assert c.contract == ()
+  assert c.free_lhs == ("i",)
+  assert c.free_rhs == ("j",)
+
+
+def test_classify_pair_label_order_follows_lhs() -> None:
+  """When labels appear in different orders on lhs/rhs, the bucket
+  ordering follows lhs for B/K/M and rhs for N — matches numpy.einsum.
+  """
+  # batch label `b` listed second on lhs but first on rhs.
+  c = classify_pair("ab", "ba", "ab")
+  assert c.batch == ("a", "b")
+  assert c.contract == ()
+  assert c.free_lhs == ()
+  assert c.free_rhs == ()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# plan_to_graph_spec — structural validation
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_spec_matmul_one_step() -> None:
+  spec = plan_to_graph_spec("ij,jk->ik", [(2, 3), (3, 4)], [(0, 1)])
+  assert len(spec.ops) == 1
+  kind, payload = spec.ops[0]
+  assert kind == "matmul"
+  assert payload["lhs_labels"] == "ij"
+  assert payload["rhs_labels"] == "jk"
+  assert payload["out_labels"] == "ik"
+  assert payload["batch"] == ()
+  assert payload["contract"] == ("j",)
+
+
+def test_spec_three_operand_chain() -> None:
+  """`ij,jk,kl->il` with greedy/optimal path = [(1,2), (0,1)] emits two
+  matmuls and no trailing transpose."""
+  spec = plan_to_graph_spec(
+    "ij,jk,kl->il",
+    [(100, 1), (1, 100_000), (100_000, 1)],
+    [(1, 2), (0, 1)],
+  )
+  kinds = [k for k, _ in spec.ops]
+  assert kinds == ["matmul", "matmul"]
+  # First contraction is `jk,kl->jl`; second is `ij,jl->il`.
+  assert spec.ops[0][1]["out_labels"] == "jl"
+  assert spec.ops[1][1]["out_labels"] == "il"
+
+
+def test_spec_unary_trace() -> None:
+  """`ii->` emits a diagonal then a reduce_sum (collapse to scalar)."""
+  spec = plan_to_graph_spec("ii->", [(4, 4)], [(0,)])
+  kinds = [k for k, _ in spec.ops]
+  # diagonal collapses 'ii' to 'i'; reduce_sum drops 'i' to ''.
+  assert kinds == ["diagonal", "reduce_sum"]
+
+
+def test_spec_unary_full_sum() -> None:
+  spec = plan_to_graph_spec("ij->", [(3, 5)], [(0,)])
+  kinds = [k for k, _ in spec.ops]
+  assert kinds == ["reduce_sum"]
+  assert spec.ops[0][1]["dst_labels"] == ""
+
+
+def test_spec_trailing_transpose_when_axis_order_differs() -> None:
+  """`ji,jk->ik` requires the path's final intermediate to be transposed
+  into the equation's stated output order."""
+  spec = plan_to_graph_spec("ji,jk->ki", [(3, 2), (3, 5)], [(0, 1)])
+  kinds = [k for k, _ in spec.ops]
+  # The matmul itself produces 'ik'; we then transpose to 'ki'.
+  assert kinds[0] == "matmul"
+  assert spec.ops[0][1]["out_labels"] == "ik"
+  assert kinds[-1] == "transpose"
+  assert spec.ops[-1][1]["dst_labels"] == "ki"
+
+
+def test_spec_ellipsis_unsupported() -> None:
+  with pytest.raises(ValueError, match="ellipsis"):
+    plan_to_graph_spec("...ij,jk->...ik", [(2, 3, 4), (4, 5)], [(0, 1)])
+
+
+def test_spec_unary_identity_emits_no_ops() -> None:
+  """`ij->ij` on a 2D operand with the natural axis order — the unary
+  step has no reduce-outs, no repeats, and matches `final_output`,
+  so the spec is empty."""
+  spec = plan_to_graph_spec("ij->ij", [(3, 5)], [(0,)])
+  assert spec.ops == []
