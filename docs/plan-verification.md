@@ -2,7 +2,7 @@
 
 The plan's `## Verification` section makes eight claims. This doc pins each one to the test that exercises it, so reviewers can audit coverage without grepping.
 
-Paths are repo-relative. Counts are commit-time; rerun `pytest --collect-only -q` for current numbers.
+Paths are repo-relative. Python counts are commit-time; rerun `pytest --collect-only -q` for current numbers. Mojo tests live under `tests/mojo/` and run via `mojo run -I src tests/mojo/<file>.mojo`.
 
 ---
 
@@ -29,9 +29,8 @@ Plan asks for ≥150 cases; hand-authored + JAX corpus + hypothesis clears it.
 |---|---|
 | `tests/python/test_opt_einsum_parity.py::test_greedy_at_least_as_good_as_opt_einsum` | 30-case corpus; asserts `moeinsum greedy FLOPs ≤ opt_einsum greedy FLOPs × 1.05` per case. |
 | `tests/python/test_opt_einsum_parity.py::test_optimal_matches_opt_einsum_optimal` | Same corpus, n ≤ 8 subset; asserts exact FLOP equality on the Bellman-Held-Karp output. |
+| `tests/python/test_random_greedy_band.py` | n ∈ {12, 16, 20, 25, 30}; `random-greedy-128` FLOPs ≤ opt_einsum DP × 1.05. Also pins N=128 ≤ N=32 (monotone in trials) and N=1 = greedy (no-noise degenerate). |
 | `tests/python/test_path.py` | Hand-verified paths for the Bellman matrix chain, BMM, attention, star network, MoE routing. |
-
-Gap: `random-greedy-N` is wired structurally (parser, dispatcher) but the 5%-band claim has no parametric test over n ≤ 30. See Outstanding §1.
 
 ---
 
@@ -43,8 +42,7 @@ Gap: `random-greedy-N` is wired structurally (parser, dispatcher) but the 5%-ban
 |---|---|
 | `tests/python/test_cache_and_edges.py` | LRU eviction at the size cap; MRU promotion; clear behavior; concurrent.futures-driven 8-thread × 32-iter stress with an RLock-backed cache. |
 | `tests/python/test_path.py::test_path_cache_hit_returns_fresh_list` | Cache hits return fresh lists, so caller mutation doesn't pollute subsequent hits. |
-
-Hot-vs-cold microbenchmark lives in `python/moeinsum/bench.py` (call twice, compare medians); not CI-gated. See Outstanding §3.
+| `tests/python/test_bench_cli.py::test_module_entry_cache_bench` | Subprocess invocation of `moeinsum-bench --cache-bench`: clears `PLAN_CACHE`, times one cold call and `--repeats` hot calls, emits `cold_ms` / `hot_ms_median` / `cache_speedup_ratio`. Ratio asserted `> 0` only — perf-counter noise dominates at small sizes. |
 
 ---
 
@@ -108,11 +106,8 @@ JSON schema validated by `tests/python/test_bench_cli.py` (8 subprocess cases).
 
 ## Outstanding (non-gated, actionable now)
 
-Don't require FFI; would tighten verification:
-
-1. **§2 `random-greedy-N` 5%-band** — parametric test over n ∈ {12, 20, 30} vs opt_einsum DP. ~30 lines.
-2. **Mojo unit tests** for `_flop_cost` / `_reduced_size_cost` in `src/einsum/path.mojo`. Exercised end-to-end today; direct tests catch regressions earlier.
-3. **§3 cache microbenchmark** — `bench.py --cache-bench` emitting hot/cold ratio. Structurally verified, not numerically pinned.
+1. **`--cache-bench` JSON fixture committed alongside docs.** One representative invocation, captured as a committed file, makes §3's claim auditable without re-running the bench.
+2. **Mojo `compute_path` smoke-test on n ≥ 12 chains.** `tests/mojo/smoke_path_cost.mojo` covers the helpers; an integration test would catch regressions in the planner glue.
 
 ---
 
