@@ -38,6 +38,16 @@ from numpy.typing import DTypeLike
 
 _ZERO_COPY_DLPACK_SOURCES = ("torch", "jax", "mlx", "cupy", "tensorflow")
 
+# Some frameworks ship their array types from a sibling C-extension module
+# whose name differs from the user-facing pip name. `type(jax_array).__module__`
+# is `"jaxlib._jax"` (or `"jaxlib.xla_extension"` on older versions), so a naive
+# `module.split('.', 1)[0]` returns `"jaxlib"` and the dispatch falls through to
+# `"other"`, killing the round-trip back to a jax array. Alias the C-extension
+# package to the user-facing one here.
+_MODULE_ALIASES = {
+  "jaxlib": "jax",
+}
+
 
 class _DLPackSource(Protocol):
   def __dlpack__(self, *, stream: None = None) -> CapsuleType: ...
@@ -92,6 +102,7 @@ def source_kind(obj: object) -> str:
   jnp.einsum conventions.
   """
   module = type(obj).__module__.split(".", 1)[0]
+  module = _MODULE_ALIASES.get(module, module)
   if module == "numpy":
     return "numpy"
   if module in _ZERO_COPY_DLPACK_SOURCES:
