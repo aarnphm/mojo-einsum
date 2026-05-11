@@ -228,6 +228,16 @@ def einsum(
     raise TypeError(
       f"deterministic must be bool, got {type(deterministic).__name__}"
     )
+  if accum_dtype is not None:
+    # Resolve up-front so a typo raises here instead of inside the FFI.
+    # Real low-precision accumulation lands with MaxBackend; today we
+    # validate the dtype is known but always accumulate in fp64.
+    try:
+      np.dtype(accum_dtype)
+    except TypeError as exc:
+      raise TypeError(
+        f"accum_dtype {accum_dtype!r} is not a recognised numpy dtype"
+      ) from exc
   if backend not in _BACKENDS:
     if backend in _PLANNED_BACKENDS:
       raise NotImplementedError(

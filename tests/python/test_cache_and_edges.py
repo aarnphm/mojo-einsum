@@ -201,3 +201,42 @@ def test_integer_bit_exact_reduction_large_k() -> None:
   b = rng.integers(-3, 4, size=(256, 4), dtype=np.int64)
   out = moeinsum.einsum("ij,jk->ik", a, b)
   np.testing.assert_array_equal(out, a @ b)
+
+
+# ---------------------------------------------------------------------
+# accum_dtype validation
+# ---------------------------------------------------------------------
+
+
+def test_accum_dtype_unknown_raises() -> None:
+  """Garbage `accum_dtype` raises a TypeError up front, not from the
+  FFI. Defends against typos that would otherwise propagate silently
+  once MaxBackend wires the parameter through."""
+  a = np.eye(3)
+  b = np.eye(3)
+  with pytest.raises(TypeError, match="accum_dtype"):
+    moeinsum.einsum("ij,jk->ik", a, b, accum_dtype="floaty")  # type: ignore[arg-type]
+
+
+def test_accum_dtype_known_dtypes_accepted() -> None:
+  """fp32, fp64, bf16 (if available), fp16 must all be accepted —
+  even though the reference backend ignores the value today, the API
+  surface validates."""
+  a = np.eye(3)
+  b = np.eye(3)
+  for dt in (np.float32, np.float64, np.float16):
+    out = moeinsum.einsum("ij,jk->ik", a, b, accum_dtype=dt)
+    assert isinstance(out, np.ndarray)
+    # Output dtype is governed by `dtype=`, not `accum_dtype=`; the
+    # latter only affects the internal accumulator (a future MaxBackend
+    # concern). Sanity-check via a result value comparison.
+    np.testing.assert_allclose(out, a @ b)
+
+
+def test_accum_dtype_none_default() -> None:
+  """`accum_dtype=None` is the documented default — automatic
+  selection. The reference backend always uses fp64 today."""
+  a = np.eye(3)
+  b = np.eye(3)
+  out = moeinsum.einsum("ij,jk->ik", a, b, accum_dtype=None)
+  np.testing.assert_allclose(out, a @ b)

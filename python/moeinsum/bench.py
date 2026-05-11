@@ -134,6 +134,14 @@ def main(argv: list[str] | None = None) -> int:
     action="store_true",
     help="Include the planner-chosen contraction path in the output",
   )
+  p.add_argument(
+    "--vs-numpy",
+    action="store_true",
+    help=(
+      "Also time numpy.einsum(optimize=True) and report the moeinsum / "
+      "numpy ratio. Lets you spot regressions against the canonical baseline."
+    ),
+  )
   args = p.parse_args(argv)
 
   shapes = _parse_shapes(args.shapes)
@@ -207,6 +215,24 @@ def main(argv: list[str] | None = None) -> int:
   }
   if args.include_path:
     result["path"] = einsum_path(args.equation, *shapes, optimize=args.optimize)
+
+  if args.vs_numpy:
+    # Warmup numpy too so we compare hot-path to hot-path.
+    for _ in range(args.warmup):
+      np.einsum(args.equation, *operands, optimize=True)
+    np_timings: list[float] = []
+    for _ in range(args.repeats):
+      t0 = time.perf_counter()
+      np.einsum(args.equation, *operands, optimize=True)
+      t1 = time.perf_counter()
+      np_timings.append((t1 - t0) * 1000.0)
+    np_median = statistics.median(np_timings)
+    result["numpy_ms_median"] = np_median
+    result["numpy_ms_min"] = min(np_timings)
+    result["numpy_ms_max"] = max(np_timings)
+    result["vs_numpy_ratio"] = round(
+      statistics.median(timings) / np_median, 3
+    )
 
   json.dump(result, sys.stdout, indent=2)
   sys.stdout.write("\n")
