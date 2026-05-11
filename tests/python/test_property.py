@@ -393,3 +393,137 @@ def test_plan_cache_hit_does_not_mutate_result() -> None:
   p1.append((99, 99))  # pollute the (potentially shared) backing list
   p2 = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
   assert p2 == p1_copy
+
+
+# ---------------------------------------------------------------------
+# Ellipsis expansion (parser side)
+# ---------------------------------------------------------------------
+
+
+@given(
+  prefix_rank=st.integers(min_value=0, max_value=3),
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_ellipsis_matmul_parity(prefix_rank: int, seed: int) -> None:
+  """`...ij,...jk->...ik` should expand to (prefix_rank + 2)-D matmul on
+  both sides. moeinsum's ellipsis must agree with numpy on the full
+  prefix-rank space [0, 3]."""
+  rng = np.random.default_rng(seed)
+  prefix = tuple(rng.integers(2, 4, size=prefix_rank).tolist())
+  a = rng.standard_normal((*prefix, 3, 5))
+  b = rng.standard_normal((*prefix, 5, 4))
+  expected = np.einsum("...ij,...jk->...ik", a, b, optimize=True)
+  actual = moeinsum.einsum("...ij,...jk->...ik", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-9, rtol=1e-9)
+
+
+@given(
+  rank=st.integers(min_value=1, max_value=3),
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_ellipsis_identity(rank: int, seed: int) -> None:
+  """`...->...` is the all-axes identity, regardless of operand rank."""
+  shape = tuple(range(2, 2 + rank))
+  rng = np.random.default_rng(seed)
+  x = rng.standard_normal(shape)
+  out = moeinsum.einsum("...->...", x)
+  np.testing.assert_allclose(out, x, atol=1e-12, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------
+# Dtype preservation through the interop layer
+# ---------------------------------------------------------------------
+
+
+@given(
+  dtype=st.sampled_from([np.float32, np.float64, np.int32, np.int64]),
+  shape_pair=st.tuples(
+    st.integers(min_value=2, max_value=6),
+    st.integers(min_value=2, max_value=6),
+    st.integers(min_value=2, max_value=6),
+  ),
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_einsum_preserves_input_dtype(
+  dtype: np.dtype,
+  shape_pair: tuple[int, int, int],
+  seed: int,
+) -> None:
+  """For matched-dtype inputs `einsum` returns the same dtype. fp32/fp32 →
+  fp32, int64/int64 → int64, etc."""
+  m, k, n = shape_pair
+  rng = np.random.default_rng(seed)
+  if np.issubdtype(dtype, np.integer):
+    a = rng.integers(-3, 4, size=(m, k)).astype(dtype)
+    b = rng.integers(-3, 4, size=(k, n)).astype(dtype)
+  else:
+    a = rng.standard_normal((m, k)).astype(dtype)
+    b = rng.standard_normal((k, n)).astype(dtype)
+  out = moeinsum.einsum("ij,jk->ik", a, b)
+  assert isinstance(out, np.ndarray)
+  assert out.dtype == np.dtype(dtype)
+
+
+@given(
+  dtype_a=st.sampled_from([np.float32, np.float64]),
+  dtype_b=st.sampled_from([np.float32, np.float64]),
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_einsum_promotes_via_result_type(
+  dtype_a: np.dtype,
+  dtype_b: np.dtype,
+  seed: int,
+) -> None:
+  """Mixed-dtype inputs land on `np.result_type(a, b)` — the same
+  promotion rule numpy uses everywhere else. fp32+fp64 → fp64."""
+  rng = np.random.default_rng(seed)
+  a = rng.standard_normal((3, 4)).astype(dtype_a)
+  b = rng.standard_normal((4, 5)).astype(dtype_b)
+  out = moeinsum.einsum("ij,jk->ik", a, b)
+  assert isinstance(out, np.ndarray)
+  assert out.dtype == np.result_type(a, b)
+
+
+# ---------------------------------------------------------------------
+# Path-cost consistency between optimizers on the same equation
+# ---------------------------------------------------------------------
+
+
+@given(case=equations(min_operands=2, max_operands=4))
+@settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
+def test_branch_2_le_greedy(
+  case: tuple[str, list[tuple[int, ...]]],
+) -> None:
+  """`branch-2` keeps the top-2 candidates per level, so it explores
+  at least as much as `branch-1` ≡ greedy. FLOPs must be ≤ greedy."""
+  eq, shapes = case
+  try:
+    greedy = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
+    branch_2 = moeinsum.einsum_path(eq, *shapes, optimize="branch-2")
+    cg = cast(int, path_cost(eq, shapes, greedy)["total_flops"])
+    cb = cast(int, path_cost(eq, shapes, branch_2)["total_flops"])
+  except ValueError:
+    return
+  assert cb <= cg, (
+    f"branch-2 FLOPs {cb} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
+  )
+
+
+@given(case=equations(min_operands=2, max_operands=4))
+@settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
+def test_auto_le_naive(
+  case: tuple[str, list[tuple[int, ...]]],
+) -> None:
+  """`auto` must be at least as good as `naive` — picking the worst
+  obvious path is the floor."""
+  eq, shapes = case
+  try:
+    naive = moeinsum.einsum_path(eq, *shapes, optimize="naive")
+    auto = moeinsum.einsum_path(eq, *shapes, optimize="auto")
+    cn = cast(int, path_cost(eq, shapes, naive)["total_flops"])
+    ca = cast(int, path_cost(eq, shapes, auto)["total_flops"])
+  except ValueError:
+    return
+  assert ca <= cn, (
+    f"auto FLOPs {ca} > naive FLOPs {cn} for {eq!r} @ {shapes}"
+  )
