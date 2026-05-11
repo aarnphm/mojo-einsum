@@ -1,27 +1,42 @@
 [build-system]
-requires = ["mohaus>=0.1,<0.2", "mojo==1.0.0b2.dev2026050805"]
+requires = [
+  "mohaus>=0.1,<0.2",
+  "mojo==1.0.0b1",
+  "mojo-compiler==1.0.0b1",
+  "mojo-compiler-mojo-libs==1.0.0b1",
+  "mojo-lldb-libs==1.0.0b1",
+]
 build-backend = "mohaus.backend"
 
 [project]
 name = "mojo-einsum"
 version = "0.1.0"
-description = "Mixed Python and Mojo package scaffolded by mohaus."
+description = "einsum impolementation in Mojo"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "your name", email = "you@example.com" }]
+authors = [{ name = "Aaron Pham", email = "contact@aarnphm.xyz" }]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Topic :: Software Development :: Build Tools",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
 ]
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+max = ["max"]
+torch = ["torch>=2.4"]
+jax = ["jax>=0.4.30"]
+mlx = ["mlx>=0.20"]
+opt-einsum-compat = ["opt_einsum>=3.3"]
+dev = ["pytest>=8", "pytest-xdist>=3", "hypothesis>=6", "ruff>=0.5", "ty"]
 
 [tool.mohaus]
 module-name = "mojo_einsum._native"
 strip = true
 generate-stub = true
 mojo-flags = []
-mojo-include-paths = []
 
 [tool.ruff]
 extend-include = ["*.ipynb"]
