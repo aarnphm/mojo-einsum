@@ -4,7 +4,7 @@ Math and algorithm derivations for mojo-einsum. Builds on the vocabulary establi
 
 ## 1. The BMM lowering
 
-The central claim of practical einsum implementation is: *any two-operand contraction reduces to a batched matrix-matrix multiply, after at most one permutation per operand*. This is what JAX's `_einsum` does (`lax_numpy.py:3264-3293`), what PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to under the hood. The derivation:
+The central claim of practical einsum implementation is: _any two-operand contraction reduces to a batched matrix-matrix multiply, after at most one permutation per operand_. This is what JAX's `_einsum` does (`lax_numpy.py:3264-3293`), what PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to under the hood. The derivation:
 
 Take a two-operand contraction `lhs,rhs->out` with labels classified into four sets (`notation.md`):
 
@@ -27,7 +27,7 @@ That's the whole lowering. Every step is either a reshape (zero-copy when stride
 
 ### When is the permute free?
 
-A permutation is free *iff* it can be expressed as a layout change with no data movement. For row-major contiguous input, this requires the target permutation to coincide with the natural memory order. In practice:
+A permutation is free _iff_ it can be expressed as a layout change with no data movement. For row-major contiguous input, this requires the target permutation to coincide with the natural memory order. In practice:
 
 - `(M, K) → (M, K)` is free.
 - `(K, M) → (M, K)` requires a physical transpose unless `K = 1` or `M = 1`.
@@ -64,7 +64,7 @@ opt_einsum's `greedy` algorithm uses a single scalar cost:
 
 $$\text{cost}_{\text{reduced\_size}}(A, B) = |A| + |B| - |A \otimes B|$$
 
-where $|A|$ is the element count of tensor $A$ and $|A \otimes B|$ is the element count of the result of contracting $A$ and $B$. Bigger reduction = better choice — the heuristic prefers steps that *shrink* the working-set memory most aggressively.
+where $|A|$ is the element count of tensor $A$ and $|A \otimes B|$ is the element count of the result of contracting $A$ and $B$. Bigger reduction = better choice — the heuristic prefers steps that _shrink_ the working-set memory most aggressively.
 
 The Smith & Gray 2018 paper (`opt_einsum`, JOSS 3:753) reports this heuristic finds near-optimal paths on ML-shaped contractions (n ≤ 10) while being O(n²) per step rather than the DP's exponential. The classic failure case is when several large intermediates of comparable size compete with one very small intermediate — the heuristic picks based on absolute reduction, not ratio, and can prefer a 1000→100 step over a 100→10 step even when the latter unlocks much better downstream choices.
 
@@ -88,7 +88,7 @@ For ML-shaped einsums (≤ 8 operands, each ≤ 6 dims) the two cost models almo
 
 ### Cardoso et al. 2024
 
-The Cardoso et al. paper *Optimizing Tensor Contraction Paths: A Greedy Algorithm Approach With Improved Cost Functions* ([arxiv 2405.09644](https://arxiv.org/abs/2405.09644)) shows that pure `reduced_size` undervalues steps with high FLOP/memory divergence. Their proposed cost:
+The Cardoso et al. paper _Optimizing Tensor Contraction Paths: A Greedy Algorithm Approach With Improved Cost Functions_ ([arxiv 2405.09644](https://arxiv.org/abs/2405.09644)) shows that pure `reduced_size` undervalues steps with high FLOP/memory divergence. Their proposed cost:
 
 $$\text{cost}_{\text{Cardoso}}(A, B) = \alpha \cdot \text{flops}(A, B) + (1 - \alpha) \cdot \text{reduced\_size}(A, B)$$
 
@@ -116,7 +116,7 @@ In a standard GEMM, packing is a "boring" memcpy with stride math. The micro-ker
 
 ### The GETT insight
 
-For a tensor contraction, the M / K / N axes are flattenings of multiple source dims. The packing routine *already* has to walk those source dims to gather a tile. So: instead of a separate transpose pass, the packing routine indexes the source tensor through the (multi-dim) M, K, N axis mappings directly. No intermediate buffer; no separate transpose kernel. The micro-kernel is unchanged.
+For a tensor contraction, the M / K / N axes are flattenings of multiple source dims. The packing routine _already_ has to walk those source dims to gather a tile. So: instead of a separate transpose pass, the packing routine indexes the source tensor through the (multi-dim) M, K, N axis mappings directly. No intermediate buffer; no separate transpose kernel. The micro-kernel is unchanged.
 
 In pseudocode:
 
@@ -164,7 +164,7 @@ The accumulated error is $\sum_k a_k b_k \epsilon_k$. Under independence and zer
 
 $$\sigma(\text{err}) \approx u \cdot \sqrt{K} \cdot \sigma(a b)$$
 
-For bf16 accumulation with $K = 64$, that's $u \sqrt{64} \approx 7.8 \times 10^{-3} \cdot 8 = 6.2 \times 10^{-2}$ — *6% relative error*. At $K = 1024$, it's 25%. For $K = 4096$ (a typical transformer dim), it's 50%. **The results are garbage.**
+For bf16 accumulation with $K = 64$, that's $u \sqrt{64} \approx 7.8 \times 10^{-3} \cdot 8 = 6.2 \times 10^{-2}$ — _6% relative error_. At $K = 1024$, it's 25%. For $K = 4096$ (a typical transformer dim), it's 50%. **The results are garbage.**
 
 fp32 accumulation with bf16 inputs: $u \sqrt{K} \approx 1.2 \times 10^{-7} \cdot \sqrt{4096} \approx 7.7 \times 10^{-6}$ at $K = 4096$ — perfectly fine.
 

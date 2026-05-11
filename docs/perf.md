@@ -1,6 +1,6 @@
 # Performance tuning
 
-This page is the user-facing companion to `derivations.md`. The math there explains *why* certain choices matter; here are the *what* and *when*: which backend to pick, which `optimize=` setting, which accumulator dtype, and how to read profiler output when something is slower than you expect.
+This page is the user-facing companion to `derivations.md`. The math there explains _why_ certain choices matter; here are the _what_ and _when_: which backend to pick, which `optimize=` setting, which accumulator dtype, and how to read profiler output when something is slower than you expect.
 
 ## When to choose which backend
 
@@ -40,12 +40,12 @@ In v0.1 this backend is a stub; full integration lands in Phase 14.
 
 This is the path-optimizer choice, separate from the backend. opt_einsum's algorithm family ships in `path.mojo`:
 
-| Algorithm | When to use | Cost |
-|---|---|---|
-| `naive` | Operand order is hand-tuned; you know better than the planner. | 0 |
-| `greedy` | Default for n > 4 operands. Near-optimal for ML-shaped contractions. | O(n³) planning |
+| Algorithm | When to use                                                            | Cost                              |
+| --------- | ---------------------------------------------------------------------- | --------------------------------- |
+| `naive`   | Operand order is hand-tuned; you know better than the planner.         | 0                                 |
+| `greedy`  | Default for n > 4 operands. Near-optimal for ML-shaped contractions.   | O(n³) planning                    |
 | `optimal` | Default for n ≤ 4 (this is what `auto` picks). Truly optimal in FLOPs. | O(3ⁿ) planning, tractable to n=16 |
-| `auto` | Automatic threshold dispatch. Default for the public API. | Per-n table above |
+| `auto`    | Automatic threshold dispatch. Default for the public API.              | Per-n table above                 |
 
 For n ≤ 4, the planning cost is negligible — always use `optimal` or `auto`. For n in the 5–16 range, `optimal` adds noticeable overhead (milliseconds to seconds at n=16), but if the einsum will be called repeatedly, the JIT cache (P7) amortizes it to zero across calls.
 
@@ -63,12 +63,12 @@ result = mojo_einsum.einsum(eq, *arrays, optimize=path)
 
 Default behavior: inputs cast up to `accum_dtype` for the accumulation, result cast back to `result_dtype`. The default `accum_dtype` is the larger of fp32 and the input dtype.
 
-| Input dtype | Default `accum_dtype` | When to override |
-|---|---|---|
-| fp32 | fp32 | Rarely. fp64 if you have a known stability problem. |
-| fp16 / bf16 | fp32 | **Never override.** fp16/bf16 accumulation is mathematically broken above K=64 (see `derivations.md` §4). |
-| fp64 | fp64 | n/a |
-| int* | int64 | If you can guarantee no overflow, int32 saves bandwidth. |
+| Input dtype | Default `accum_dtype` | When to override                                                                                          |
+| ----------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
+| fp32        | fp32                  | Rarely. fp64 if you have a known stability problem.                                                       |
+| fp16 / bf16 | fp32                  | **Never override.** fp16/bf16 accumulation is mathematically broken above K=64 (see `derivations.md` §4). |
+| fp64        | fp64                  | n/a                                                                                                       |
+| int\*       | int64                 | If you can guarantee no overflow, int32 saves bandwidth.                                                  |
 
 The `derivations.md` §4 derivation shows the √K error growth concretely. The headline number: bf16 accumulator at K=4096 has ~50% relative error. fp32 accumulator at K=4096 has ~10⁻⁵ error. The fp32 accumulator costs 2× bandwidth at the input but is a non-negotiable correctness requirement.
 
@@ -89,10 +89,13 @@ mojo-einsum-bench "ij,jk,kl->il" --shapes 256,256,256,256 --backend max_kernels 
 ```json
 {
   "equation": "ij,jk,kl->il",
-  "path": [[0, 1], [0, 1]],
+  "path": [
+    [0, 1],
+    [0, 1]
+  ],
   "steps": [
-    {"shape": "[256,256]x[256,256]", "ms": 0.42, "gflops": 80.1},
-    {"shape": "[256,256]x[256,256]", "ms": 0.41, "gflops": 81.4}
+    { "shape": "[256,256]x[256,256]", "ms": 0.42, "gflops": 80.1 },
+    { "shape": "[256,256]x[256,256]", "ms": 0.41, "gflops": 81.4 }
   ],
   "total_ms": 0.83
 }

@@ -26,7 +26,7 @@ $$s = \sum_{ij} A_{ij}$$
 
 **Transpose.** `"ij->ji"` is a permutation. In both NumPy and Mojo implementations of this we never copy data and just return a view with permuted strides.
 
-**Diagonal.** `"ii->i"` is the trickiest single-operand case. The repeated `i` on the input means *the same index value is used for both axes*. The output has one `i`, so we keep that varying:
+**Diagonal.** `"ii->i"` is the trickiest single-operand case. The repeated `i` on the input means _the same index value is used for both axes_. The output has one `i`, so we keep that varying:
 
 $$d_i = A_{ii}$$
 
@@ -38,88 +38,88 @@ $$t = \sum_i A_{ii}$$
 
 The output is a scalar. Internally we read it as: collapse the diagonal first (the repeated `i` constraint), then sum out the surviving `i`.
 
-**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's convention is to take every label that appears exactly once across all inputs, sort alphabetically, that's your output. So `"ij"` is the same as `"ij->ij"`, and `"ii"` is the same as `"ii->"` (every label appears more than once, so the output has no labels — a scalar).
+**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's convention is to take every label that appears exactly once across all inputs, sort alphabetically, that's your output. So `"ij"` is the same as `"ij->ij"`, and `"ii"` is the same as `"ii->"` (every label appears more than once, so the output has no labels—a scalar).
 
 ## Two-operand operations
 
-Two operands open up the whole catalog: inner and outer products, matvec, matmul, batched matmul, arbitrary contractions.
+We represents inner and outer products, matvec, matmul, batched matmul, arbitrary contractions via two-operand operation
 
-**Inner product.** `"i,i->"` — two vectors, contract on `i`, scalar out:
+**Inner product.** `"i,i->"`:
 
 $$s = \sum_i x_i y_i$$
 
-**Outer product.** `"i,j->ij"` — two vectors, no contraction, result is a matrix of all pairwise products:
+**Outer product.** `"i,j->ij"`, result is a matrix of all pairwise products:
 
 $$M_{ij} = x_i y_j$$
 
 The labels `i` and `j` are independent, so no implicit sum.
 
-**Matrix-vector.** `"ij,j->i"` — `j` appears in both operands and not in output, so it's the contracted axis:
+**Matrix-vector.** `"ij,j->i"`, the result is the contracted axis:
 
 $$y_i = \sum_j A_{ij} x_j$$
 
-**Batched matmul.** `"bij,bjk->bik"` — `b` appears in both operands and in the output, so it's a *batch* axis: the operation is broadcast across `b`. For each `b`, the contraction `ij,jk->ik` is performed independently. The total operation is $B$ independent matrix multiplications.
+**Batched matmul.** `"bij,bjk->bik"`. For the _batch_ axis, the operation is broadcast across `b`. For each `b`, the contraction `ij,jk->ik` is performed independently. The total operation is $B$ independent matrix multiplications.
 
-**Double contraction (Frobenius inner product).** `"ij,ij->"` — both `i` and `j` are contracted away:
+**Double contraction (Frobenius inner product).** `"ij,ij->"`:
 
 $$s = \sum_{ij} A_{ij} B_{ij}$$
 
-**Trace of a product.** `"ij,ji->"` — `i` and `j` are contracted; the second operand's labels are transposed relative to the first:
+**Trace of a product.** `"ij,ji->"`—`i` and `j` are both contracted:
 
 $$t = \sum_{ij} A_{ij} B_{ji} = \mathrm{tr}(AB)$$
 
 ## The four roles every dim plays
 
-When you stare at enough einsum equations the same taxonomy emerges. For any two-operand contraction `lhs,rhs->out`, every label falls into exactly one of four buckets:
+For any two-operand contraction `lhs,rhs->out`, every label falls into one of four category:
 
-- **B** (batch): in `lhs`, `rhs`, and `out`. Survives independently on each side; the operation is broadcast across it.
+- **B** (batch): in `lhs`, `rhs`, and `out`. Broadcast across it.
 - **K** (contract): in `lhs` and `rhs`, not in `out`. Summed out.
 - **M** (free-left): in `lhs` and `out`, not in `rhs`. Survives from the left operand.
 - **N** (free-right): in `rhs` and `out`, not in `lhs`. Survives from the right operand.
 
-This is the classification every serious einsum implementation does (it's literally the inner loop of JAX's `_einsum` at `jax/_src/numpy/lax_numpy.py:3264-3293`, and PyTorch's `sumproduct_pair` in `aten/src/ATen/native/Linear.cpp`). Once you know the B/K/M/N decomposition you can lower the contraction to a single batched matmul: reshape the lhs to `(*B, *M, *K)`, the rhs to `(*B, *K, *N)`, multiply, get `(*B, *M, *N)`, then permute to match the output's label order.
+This is well-known with both JAX/PyTorch implementation.
 
-The reduction is mechanical:
+| Equation       | B   | M   | K    | N   |
+| -------------- | --- | --- | ---- | --- |
+| `ij,jk->ik`    | —   | i   | j    | k   |
+| `bij,bjk->bik` | b   | i   | j    | k   |
+| `ij,ij->`      | —   | —   | i, j | —   |
+| `ij,ji->`      | —   | —   | i, j | —   |
+| `bij,bkj->bik` | b   | i   | j    | k   |
 
-| Equation | B | M | K | N |
-|---|---|---|---|---|
-| `ij,jk->ik` | — | i | j | k |
-| `bij,bjk->bik` | b | i | j | k |
-| `ij,ij->` | — | — | i, j | — |
-| `ij,ji->` | — | — | i, j | — |
-| `bij,bkj->bik` | b | i | j | k |
-
-Note `ij,ji->` and `ij,ij->` have the same B/K/M/N table but different stride math — the second operand is transposed in one but not the other. The classifier doesn't care; it just identifies which axes are contracted, and the BMM lowering's reshape handles the permutation.
+Note `ij,ji->` and `ij,ij->` have the same B/K/M/N table but different stride math—_the second operand is transposed in one but not the other_.
 
 ## Multi-operand and the contraction path
 
-Einsum scales to any number of operands. `"ij,jk,kl->il"` contracts three matrices in sequence. There's no built-in associativity rule — the implementation chooses a *path*, a binary tree of pairwise contractions. For three matrices there are two:
+Einsum scales to any number of operands. `"ij,jk,kl->il"` contracts three matrices in sequence. There's no built-in associativity rule—the implementation chooses a _path_, a binary tree of pairwise contractions. For three matrices there are two:
 
 - `(ij, jk) -> ik`, then `(ik, kl) -> il`
 - `(jk, kl) -> jl`, then `(ij, jl) -> il`
 
 Bellman's matrix-chain example shows why the choice can matter by orders of magnitude. Let $A$ be $100 \times 1$, $B$ be $1 \times 10^5$, $C$ be $10^5 \times 1$ — the final result is a single scalar.
 
-| Path | First step | Intermediate | Second step | Total ops |
-|---|---|---|---|---|
+| Path    | First step                      | Intermediate      | Second step                     | Total ops           |
+| ------- | ------------------------------- | ----------------- | ------------------------------- | ------------------- |
 | $(AB)C$ | $100 \cdot 1 \cdot 10^5 = 10^7$ | $100 \times 10^5$ | $100 \cdot 10^5 \cdot 1 = 10^7$ | $\sim 2 \cdot 10^7$ |
-| $A(BC)$ | $1 \cdot 10^5 \cdot 1 = 10^5$ | $1 \times 1$ | $100 \cdot 1 \cdot 1 = 100$ | $\sim 10^5$ |
+| $A(BC)$ | $1 \cdot 10^5 \cdot 1 = 10^5$   | $1 \times 1$      | $100 \cdot 1 \cdot 1 = 100$     | $\sim 10^5$         |
 
-The ratio is ~200× in FLOPs and $10^7$× in peak intermediate memory. Real models hit this regularly — picking the wrong path for an MoE routing einsum at scale is the difference between fitting in HBM and OOM'ing.
+The ratio is ~200x in FLOPs and $10^7$x in peak intermediate memory. (example is MoE routing)
 
-This is the path optimization problem. mojo-einsum's `path.mojo` implements opt_einsum's family of algorithms (`greedy`, `optimal`, `random-greedy`, `branch`, `auto`) natively. The algorithms themselves are in `derivations.md`.
+This is a path optimization problem.
+
+I implemented opt_einsum's family of algorithms (`greedy`, `optimal`, `random-greedy`, `branch`, `auto`) natively. The algorithms themselves are in `derivations.md`.
 
 ## Ellipsis: broadcasting across unknown ranks
 
-The `...` token stands for "any number of leading dimensions." It's the bridge between einsum's explicit-rank world and the more general broadcasting semantics of NumPy.
+The `...` token stands for "any number of leading dimensions."
 
 `"...ij,jk->...ik"` is a batched matmul where the batch shape is whatever the inputs supply. For a 4-D `(B1, B2, M, K)` lhs and 2-D `(K, N)` rhs, the ellipsis expands to two labels representing `B1` and `B2`. The rhs has no ellipsis, so it broadcasts: it carries no batch dims and is reused for every `(B1, B2)` position.
 
-In mojo-einsum's parser, ellipsis is initially represented by a sentinel label (`-1`). A second pass — `expand_ellipsis(eq, operand_ranks)` — substitutes fresh label IDs once we know the operand ranks. This deferred expansion keeps the parser independent of operand shapes.
+In mojo-einsum's parser, ellipsis is initially represented by a sentinel label (`-1`). A second pass—`expand_ellipsis(eq, operand_ranks)` — substitutes fresh label IDs once we know the operand ranks. This deferred expansion keeps the parser independent of operand shapes.
 
 ## Attention as einsum
 
-The cleanest worked example of einsum's expressive power is multi-head attention. Given:
+We can use einsum to express multi-head attention. Given:
 
 - Q of shape `(batch, heads, seq_q, dim_head)` — labels `bhqd`
 - K of shape `(batch, heads, seq_k, dim_head)` — labels `bhkd`
@@ -143,7 +143,9 @@ out = np.einsum("bhqk,bhkv->bhqv", weights, V)
 
 Two einsums and a softmax. The PyTorch source for the same block runs forty lines.
 
-## What this package's IR represents
+## IR
+
+mojo-einsum has a small IR to represent path optimization.
 
 When `parse("ij,jk->ik")` runs, it produces an `EinsumEquation`:
 
@@ -155,8 +157,10 @@ label_chars: ["i", "j", "k"]
 has_explicit_output: True
 ```
 
-Labels are interned as ints, not characters. NumPy and PyTorch use chars and inherit a 52-label limit (a-zA-Z); we pay one int per label and lift the cap. For ML this rarely matters; for tensor networks with hundreds of contracted indices it does.
+Labels are interned as ints. NumPy and PyTorch use chars and inherit a 52-label limit (a-zA-Z); we pay one int per label and lift the cap. This is a trade off with tensor-networks, but for most ML workload, it should be ok.
 
-The `EinsumEquation` is consumed by the path optimizer (`path.mojo`), which produces a `ContractionPath` — a sequence of pairwise contraction steps. Each step is then turned into a `PlanStep` with the B/K/M/N classification baked in (this is `classify_pair` in `plan.mojo`, which mirrors JAX's classifier). The `ContractionPlan` is the IR backends consume; they decide how to execute each step.
+The `EinsumEquation` is consumed by the path optimizer (`path.mojo`), which produces a `ContractionPath`—a sequence of pairwise contraction steps. Each step is then turned into a `PlanStep` with the B/K/M/N classification baked in (this is `classify_pair` in `plan.mojo`, which mirrors JAX's classifier).
 
-Once you have the plan, executing it is mechanical: each pairwise step is a batched matmul on appropriate reshapes; each unary step is a sum, diagonal, transpose, or trace. The interesting engineering is everywhere else: picking a path that doesn't blow the intermediate, then making the reshape free, then folding the permutation into the kernel's tile loader. Those are in `derivations.md` and `perf.md`.
+The `ContractionPlan` is the IR backends consume; they decide how to execute each step.
+
+Once you have the plan, each pairwise step is a batched matmul on appropriate reshapes; each unary step is a sum, diagonal, transpose, or trace. The interesting engineering is to pick a path that doesn't blow the intermediate, then making the reshape free, then folding the permutation into the kernel's tile loader. Those are in `derivations.md` and `perf.md`.
