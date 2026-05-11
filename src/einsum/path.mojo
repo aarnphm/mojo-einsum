@@ -6,8 +6,9 @@ to perform pairwise contractions. The interface mirrors `opt_einsum`:
   - `greedy`            — reduced_size heuristic, O(n * k) per step
   - `optimal`           — DP over subsets (Bellman-Held-Karp), n ≤ 16
   - `auto`              — `optimal` if n ≤ 4, else `greedy`
+  - `random-greedy`     — 32 deterministic noisy-greedy trials
   - `explicit(path)`    — caller-supplied path
-  - (P4 extension) `random_greedy_N` and `branch` families.
+  - (P4 extension) `branch` families.
 
 The output is a `ContractionPath`: a `List[(lhs_idx, rhs_idx)]` of
 pairwise step indices, working-set semantics — operand indices refer to
@@ -470,8 +471,8 @@ def random_greedy_path(
 ) raises -> List[ContractionStep]:
     """N greedy trials with stochastic cost perturbation, return best.
 
-    At each step, we still pick the pair with the best `reduced_size`
-    but break ties by a hashed-pseudo-random tiebreaker derived from
+    At each step, we pick the pair with the best noisy `reduced_size`,
+    where the deterministic hash perturbation is derived from
     `seed + trial * 1009 + step + lhs * 131 + rhs * 17`. After N
     trials, return whichever path has the lowest *total* FLOP cost.
 
@@ -501,6 +502,7 @@ def random_greedy_path(
         while len(working) >= 2:
             var best_i: Int = -1
             var best_j: Int = -1
+            var best_noisy_score: Int = -9223372036854775807
             var best_score: Int = -9223372036854775807
             var best_flops: Int = 9223372036854775807
             var best_jitter: Int = -1
@@ -516,16 +518,28 @@ def random_greedy_path(
                     var score = _reduced_size_cost(working[i], working[j], out, label_sizes)
                     var flops = _flop_cost(working[i], working[j], out, label_sizes)
                     var jitter = (trial_seed + step_idx + i * 131 + j * 17) & 0xFFFF
+                    var centered_jitter = jitter - 32768
+                    var abs_score = score if score >= 0 else -score
+                    var noise_scale = abs_score // 2 + 1
+                    var noisy_score = score + (centered_jitter * noise_scale) // 32768
                     var better = False
-                    if score > best_score:
+                    if noisy_score > best_noisy_score:
                         better = True
-                    elif score == best_score and flops < best_flops:
+                    elif noisy_score == best_noisy_score and score > best_score:
                         better = True
-                    elif score == best_score and flops == best_flops and jitter > best_jitter:
+                    elif noisy_score == best_noisy_score and score == best_score and flops < best_flops:
+                        better = True
+                    elif (
+                        noisy_score == best_noisy_score
+                        and score == best_score
+                        and flops == best_flops
+                        and jitter > best_jitter
+                    ):
                         better = True
                     if better:
                         best_i = i
                         best_j = j
+                        best_noisy_score = noisy_score
                         best_score = score
                         best_flops = flops
                         best_jitter = jitter

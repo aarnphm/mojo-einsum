@@ -15,29 +15,13 @@ DLPack zero-copy + JAX/PyTorch/MLX interop arrives in P8.
 
 from __future__ import annotations
 
-# The mohaus editable hook rebuilds `_native` on first import and needs
-# to link a libpython. uv-managed Pythons aren't on a system loader
-# path, so set MOJO_PYTHON_LIBRARY before the FFI import — *unless* the
-# environment already provides it (CI, custom toolchains). This has to
-# live at module top before `_native` is touched.
-import os as _os
-import sysconfig as _sysconfig
-from pathlib import Path as _Path
-
-if "MOJO_PYTHON_LIBRARY" not in _os.environ:
-  _libdir = _sysconfig.get_config_var("LIBDIR")
-  _libname = _sysconfig.get_config_var("LDLIBRARY")
-  if _libdir and _libname:
-    _candidate = _Path(_libdir) / _libname
-    if _candidate.is_file():
-      _os.environ["MOJO_PYTHON_LIBRARY"] = str(_candidate)
-
 from typing import cast
 
 import numpy as np
 from numpy.typing import DTypeLike
 
 from ._cache import PLAN_CACHE
+from ._cost import path_cost
 from ._interop import to_numpy as _to_numpy
 from ._native import (
   einsum_compute_path as _einsum_compute_path_native,
@@ -52,7 +36,13 @@ from ._native import (
   parse_equation as _parse_equation_native,
 )
 
-__all__ = ["einsum", "einsum_path", "parse_equation", "PLAN_CACHE"]
+__all__ = [
+  "einsum",
+  "einsum_path",
+  "parse_equation",
+  "path_cost",
+  "PLAN_CACHE",
+]
 
 
 _BACKENDS = ("reference",)  # max lands in P5.
@@ -88,9 +78,9 @@ def einsum(
       backend:     ``"reference"`` (v0.1). ``"max"``,
                    ``"native"``, ``"max_graph"`` land in later phases.
       optimize:    Path optimizer name. ``"auto"`` (default),
-                   ``"greedy"``, ``"optimal"``, or ``"naive"``.
-                   opt_einsum's ``random-greedy`` and ``branch`` family
-                   are P4 polish.
+                   ``"greedy"``, ``"optimal"``, ``"random-greedy"``,
+                   or ``"naive"``. opt_einsum's ``branch`` family is
+                   P4 polish.
       accum_dtype: Internal accumulator precision. None = automatic
                    (fp32 for fp16/bf16 inputs, else match input). Set
                    explicitly to override.

@@ -16,8 +16,8 @@ fail with a precise error message rather than an ImportError stack.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
-from typing import Any
 
 
 def is_available() -> bool:
@@ -33,7 +33,7 @@ def is_available() -> bool:
     return False
 
 
-def require_max_graph() -> Any:
+def require_max_graph() -> object:
   """Import and return `max.graph` or raise a clear `ImportError`."""
   if not is_available():
     raise ImportError(
@@ -41,9 +41,7 @@ def require_max_graph() -> Any:
       "(install with `uv pip install -e '.[max]'` and re-import). "
       "See docs/comparisons.md for context."
     )
-  import max.graph as max_graph
-
-  return max_graph
+  return importlib.import_module("max.graph")
 
 
 class MaxGraphBackend:
@@ -68,5 +66,5 @@ class MaxGraphBackend:
       "land first. See README.md roadmap."
     )
 
-  def execute(self, plan: Any, operands: list[Any]) -> Any:  # pragma: no cover
+  def execute(self, plan: object, operands: list[object]) -> object:  # pragma: no cover
     raise NotImplementedError

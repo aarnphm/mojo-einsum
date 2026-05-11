@@ -21,14 +21,15 @@ Take a two-operand contraction `lhs,rhs->out` with labels classified into [[nota
 - N—free-right (in $\text{rhs} \cap  \text{out}$)
 - K—contract (in $\text{lhs} \cap \text{rhs}$)
 
-Choose any orderings $b_1, \ldots, b_{|B|}$ for the B labels, $m_1, \ldots, m_{|M|}$ for M, $n_1, \ldots, n_{|N|}$ for N, $k_1, \ldots, k_{|K|}$ for K. 
-Permute lhs to label order `(b, m, k)`, permute rhs to label order `(b, k, n)`. 
+Choose any orderings $b_1, \ldots, b_{|B|}$ for the B labels, $m_1, \ldots, m_{|M|}$ for M, $n_1, \ldots, n_{|N|}$ for N, $k_1, \ldots, k_{|K|}$ for K.
 
-We have reshape:
+Permute lhs to label order `(b, m, k)`, permute rhs to label order `(b, k, n)`:
 
-$$L_{(b),(m),(k)} = \text{lhs}_{b, m, k}, \quad R_{(b),(k),(n)} = \text{rhs}_{b, k, n}$$
+$$
+L_{(b),(m),(k)} = \text{lhs}_{b, m, k}, \quad R_{(b),(k),(n)} = \text{rhs}_{b, k, n}
+$$
 
-where $(b)$ is the flattened batch index, $(m)$ flattens all M dims, etc. Each flattened dim is just the product of the corresponding axis sizes. The contraction becomes:
+where $(b)$ is the flattened batch index, $(m)$ flattens all M dims, etc. We notice that each flattened dim is just the product of the corresponding axis sizes. The contraction becomes:
 
 $$C_{(b),(m),(n)} = \sum_{(k)} L_{(b),(m),(k)} \, R_{(b),(k),(n)}$$
 

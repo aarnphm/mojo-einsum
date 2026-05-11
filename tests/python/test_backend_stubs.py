@@ -11,7 +11,6 @@ from __future__ import annotations
 import importlib
 
 import pytest
-
 from moeinsum._max_graph import MaxGraphBackend, is_available, require_max_graph
 
 
