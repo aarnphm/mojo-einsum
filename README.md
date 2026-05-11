@@ -33,7 +33,7 @@ to force.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `moeinsum-bench` script (installed by `pip install -e .`), JSON output.
-- **Tests**: 427 numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
+- **Tests**: 464 numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / bench-CLI / hypothesis-property cases. 4 framework-tests skip when torch/jax/mlx not installed.
 
 ## Docs
 
@@ -42,6 +42,7 @@ to force.
 - [`docs/perf.md`](docs/perf.md) — tuning guide, backend selection, profile triage.
 - [`docs/comparisons.md`](docs/comparisons.md) — scorecard vs NumPy / PyTorch / JAX / cuTENSOR / TBLIS.
 - [`docs/ffi.md`](docs/ffi.md) — FFI cutover design-spike for P5/P10/P11/P12.
+- [`docs/plan-verification.md`](docs/plan-verification.md) — claim → test map for the plan's `## Verification` section.
 
 ## Install
 
