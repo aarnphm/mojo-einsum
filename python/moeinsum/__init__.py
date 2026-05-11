@@ -46,7 +46,16 @@ __all__ = [
 
 
 _BACKENDS = ("reference",)  # max lands in P5.
-_OPTIMIZE = ("naive", "greedy", "optimal", "auto", "random-greedy")
+_OPTIMIZE = (
+  "naive",
+  "greedy",
+  "optimal",
+  "auto",
+  "random-greedy",
+  "branch-all",
+  "branch-2",
+  "branch-1",
+)
 
 
 def parse_equation(eq: str) -> dict[str, object]:
@@ -79,8 +88,8 @@ def einsum(
                    ``"native"``, ``"max_graph"`` land in later phases.
       optimize:    Path optimizer name. ``"auto"`` (default),
                    ``"greedy"``, ``"optimal"``, ``"random-greedy"``,
-                   or ``"naive"``. opt_einsum's ``branch`` family is
-                   P4 polish.
+                   ``"branch-all"`` / ``"branch-2"`` / ``"branch-1"``,
+                   or ``"naive"``.
       accum_dtype: Internal accumulator precision. None = automatic
                    (fp32 for fp16/bf16 inputs, else match input). Set
                    explicitly to override.

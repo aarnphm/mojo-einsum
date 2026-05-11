@@ -16,12 +16,12 @@ assert np.allclose(c, a @ b)
 
 - **Parser** (`parse.mojo`): full einsum equation grammar — basic, ellipsis, trace, diagonal, implicit output, multi-char-via-int-interning.
 - **Plan IR** (`plan.mojo`): backend-agnostic `ContractionPlan` with B/K/M/N classification per JAX's `_einsum`.
-- **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `random-greedy`, and `auto` algorithms.
+- **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `branch`, `random-greedy`, and `auto` algorithms.
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `python -m moeinsum.bench` with JSON output.
-- **Tests**: 223 numpy-parity / parser / path / cache / interop cases. 3 framework-tests skip when torch/jax/mlx not installed.
+- **Tests**: 231 numpy-parity / parser / path / cache / interop cases. 3 framework-tests skip when torch/jax/mlx not installed.
 
 ## Docs
 
@@ -47,7 +47,7 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P1    | ✅      | Reference backend + parser + plan + numpy bridge                                           |
 | P2    | ✅      | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                     |
 | P3    | ✅      | Unary kernels (transpose / diagonal / sum / trace)                                         |
-| P4    | ✅      | Path optimizer: greedy + optimal-DP + auto + random-greedy. branch family deferred.        |
+| P4    | ✅      | Path optimizer: greedy + optimal-DP + auto + random-greedy + branch family                 |
 | P5    | ⏳      | `MaxBackend` dispatching to `linalg.batched_matmul` (needs TileTensor FFI)                 |
 | P6    | ✅      | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred     |
 | P7    | ✅      | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                               |

@@ -33,7 +33,7 @@ where $(b)$ is the flattened batch index, $(m)$ flattens all M dims, etc. We not
 
 $$C_{(b),(m),(n)} = \sum_{(k)} L_{(b),(m),(k)} \, R_{(b),(k),(n)}$$
 
-which is **exactly a batched matmul** of $|B|$-batched matrices, where each batch element is `(|M_flat|, |K_flat|) × (|K_flat|, |N_flat|) → (|M_flat|, |N_flat|)`. Finally reshape `C` back to the `(b, m, n)` axis-labeled tensor and permute its axes to match `out_labels` order.
+This is a _batched matmul_ of $|B|$-batched matrices, where each batch element is $(|M_{\text{flat}}|, |K_{\text{flat}}|) \times  (|K_\text{flat}|, |N_\text{flat}|) \to (|M_\text{flat}|, |N_{\text{flat}}|)$. Finally reshape `C` back to the `(b, m, n)` axis-labeled tensor and permute its axes to match `out_labels` order.
 
 There is either a reshape (zero-copy per strides), a permute, or a batched GEMM.
 
@@ -59,34 +59,39 @@ The `MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBacke
 
 ### What about the inner BMM kernel?
 
-Once we're at $(B, M, K) \times (B, K, N) \to (B, M, N)$ shape, the workhorse is `linalg.batched_matmul` from `~/workspace/modular/max/kernels/src/linalg/bmm.mojo`. It dispatches:
+Once we're at $(B, M, K) \times (B, K, N) \to (B, M, N)$ shape, the workhorse is `linalg.batched_matmul`. ICYMI, it dispatches:
 
 - SM90/Hopper $\to$ `warp_specialize_gemm_with_multicasting` with WGMMA + TMA.
 - SM100/Blackwell $\to$ analogous TCGEN05-based kernel.
 - CPU + Apple Silicon $\to$ `apple_accelerate.mojo` calls vDSP/AMX through the Accelerate framework.
 - CPU + AVX-512 $\to$ BLIS-style micro-kernel with packing.
 
-This is the "free win" of the BMM lowering: you inherit the work of every BLAS author since 1979. The price is that for non-BMM-shaped contractions — small K, small M, weird strides — you pay for indexing math the BMM kernel doesn't expect. §3 discusses the workaround.
+The cost right now is that for non-BMM-shaped contractions—small K, small M, weird strides—we will have to pay for indexing math of the BMM kernel. See [[#3. GETT: GEMM-like Tensor-Tensor multiplication|GETT]] discusses the workaround.
 
 ## 2. Contraction-path cost models
 
-For multi-operand einsum, the order of pairwise contractions matters by orders of magnitude. `path.mojo` implements three algorithms; this section derives their cost models.
+For multi-operand einsum, the order of pairwise contractions matters by orders of magnitude. this section derives their cost models of the three algorithm from `opt_einsum`
 
 ### Reduced-size heuristic (greedy)
 
-The cost of one pairwise step is conceptually two things: FLOPs (compute) and intermediate-tensor size (memory + bandwidth). For BMM-shaped contractions these are coupled — bigger intermediates mean more FLOPs — but the coupling is not perfect.
+The cost of one pairwise step is conceptually two things: FLOPs (compute) and intermediate-tensor size (memory + bandwidth).
 
-opt_einsum's `greedy` algorithm uses a single scalar cost:
+For BMM-shaped contractions these are coupled—bigger intermediates means more FLOPs—but the coupling is not perfect.
+
+`greedy` algorithm uses a single scalar cost:
 
 $$\text{cost}_{\text{reduced\_size}}(A, B) = |A| + |B| - |A \otimes B|$$
 
-where $|A|$ is the element count of tensor $A$ and $|A \otimes B|$ is the element count of the result of contracting $A$ and $B$. Bigger reduction = better choice — the heuristic prefers steps that _shrink_ the working-set memory most aggressively.
+where $|A|$ is the element count of tensor $A$ and $|A \otimes B|$ is the element count of the result of contracting $A$ and $B$.
 
-The Smith & Gray 2018 paper (`opt_einsum`, JOSS 3:753) reports this heuristic finds near-optimal paths on ML-shaped contractions (n ≤ 10) while being O(n²) per step rather than the DP's exponential. The classic failure case is when several large intermediates of comparable size compete with one very small intermediate — the heuristic picks based on absolute reduction, not ratio, and can prefer a 1000→100 step over a 100→10 step even when the latter unlocks much better downstream choices.
+Bigger reduction = better choice—they prefers steps that _shrink_ the working-set memory most aggressively.
+
+Smith et al. 2018 (`opt_einsum`, JOSS 3:753) reports this heuristic finds near-optimal paths on ML-shaped contractions (n ≤ 10) while being $O(n^{2})$ per step rather than the DP's exponential.
+The classic failure case is when several large intermediates of comparable size compete with one very small intermediate—the heuristic picks based on absolute reduction instead of ratio, and can prefer a $1000 \to 100$ step over a $100 \to 10$ step even when the latter unlocks much better downstream choices.
 
 ### Optimal DP (Bellman-Held-Karp)
 
-For n ≤ 16 the optimal path is tractable via DP over operand subsets:
+For $n\le 16$ the optimal path is tractable via DP over operand subsets:
 
 $$f(S) = \min_{\emptyset \subsetneq T \subsetneq S} \left[ f(T) + f(S \setminus T) + \text{cost}(T, S \setminus T) \right]$$
 

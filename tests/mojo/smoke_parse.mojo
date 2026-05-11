@@ -110,6 +110,50 @@ def check_path_greedy() raises:
     print("check_path_greedy: OK")
 
 
+def check_path_branch() raises:
+    # 4-operand matrix chain — exercise branch-{all,2,1} dispatch.
+    # branch-1 must equal greedy by construction. branch-all and
+    # branch-2 must produce a valid path (3 steps for n=4).
+    var eq = parse(String("ab,bc,cd,de->ae"))
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(3)
+    s0.append(4)
+    shapes.append(s0^)
+    var s1 = List[Int]()
+    s1.append(4)
+    s1.append(5)
+    shapes.append(s1^)
+    var s2 = List[Int]()
+    s2.append(5)
+    s2.append(6)
+    shapes.append(s2^)
+    var s3 = List[Int]()
+    s3.append(6)
+    s3.append(7)
+    shapes.append(s3^)
+    var sizes = _resolve_label_sizes(eq, shapes)
+
+    var greedy = compute_path(eq, sizes, String("greedy"))
+    var branch_all = compute_path(eq, sizes, String("branch-all"))
+    var branch_2 = compute_path(eq, sizes, String("branch-2"))
+    var branch_1 = compute_path(eq, sizes, String("branch-1"))
+
+    if len(branch_all) != 3:
+        raise Error(String("branch-all: expected 3 steps, got ", len(branch_all)))
+    if len(branch_2) != 3:
+        raise Error(String("branch-2: expected 3 steps, got ", len(branch_2)))
+    if len(branch_1) != len(greedy):
+        raise Error(String("branch-1: step count differs from greedy"))
+    for i in range(len(branch_1)):
+        if (
+            branch_1[i].lhs_idx != greedy[i].lhs_idx
+            or branch_1[i].rhs_idx != greedy[i].rhs_idx
+        ):
+            raise Error(String("branch-1 differs from greedy at step ", i))
+    print("check_path_branch: OK")
+
+
 def main() raises:
     check_basic()
     check_trace()
@@ -117,4 +161,5 @@ def main() raises:
     check_ellipsis()
     check_naive_plan()
     check_path_greedy()
+    check_path_branch()
     print("all parser smoke tests passed")

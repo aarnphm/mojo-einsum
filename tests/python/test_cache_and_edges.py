@@ -62,7 +62,7 @@ def test_unknown_backend_raises() -> None:
 def test_unknown_optimize_raises() -> None:
   a = np.eye(2)
   with pytest.raises(ValueError, match="unknown optimize"):
-    moeinsum.einsum("ij,jk->ik", a, a, optimize="branch-2")  # type: ignore[arg-type]
+    moeinsum.einsum("ij,jk->ik", a, a, optimize="nonsense-x")  # type: ignore[arg-type]
 
 
 def test_size_one_dim() -> None:

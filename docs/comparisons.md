@@ -16,7 +16,7 @@ date: 2026/05/10
 | `greedy` algorithm             | ✅                         | ✅ (`einsum_path`)   | ✅ (via opt_einsum)   | ✅ (via opt_einsum)   | n/a                | n/a            |
 | `optimal` DP algorithm         | ✅ (n ≤ 16)                | ✅ $n \leq \approx 10$         | ✅ (via opt_einsum)   | ✅ (via opt_einsum)   | n/a                | n/a            |
 | `random-greedy`                | ✅ (fixed-trial)           | ❌                   | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
-| `branch` family                | ⏳ (P4 polish)             | ❌                   | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
+| `branch` family                | ✅ (`all` / `2` / `1`)     | ❌                   | ✅ (opt_einsum)       | ✅ (opt_einsum)       | n/a                | n/a            |
 | Hypergraph paths (cotengra)    | ❌ (out of v0.1 scope)     | ❌                   | external              | external              | n/a                | n/a            |
 | Compile-time-known paths       | ✅ (when shapes are alias) | ❌                   | ❌                    | partial (jit-traced)  | partial (JIT plan) | ❌             |
 | Per-call-site kernel cache     | ✅ (P7)                    | ❌                   | ❌                    | ✅ (jit cache)        | ✅ (plan cache)    | ❌             |
@@ -60,7 +60,7 @@ expectation:
 
 - **No cotengra equivalent.** For tensor-network workloads, you must compute the path externally. This is a deliberate v0.1 scoping decision; opt_einsum's algorithm family covers ≤30 operands well, and that handles all ML use cases. Quantum-circuit simulation and similar genuinely need cotengra.
 - **No GETT yet.** Phase 11/12 work. Until then, awkward permutes go through TTGT, with the bandwidth cost that implies.
-- **No `branch` family yet.** opt_einsum has branch search; moeinsum's `path.mojo` will get it when a real workload needs it. Until then, pass an explicit path if branch search matters.
+- **No explicit-path parser yet.** opt_einsum accepts caller-supplied paths directly; moeinsum still exposes only named optimizers.
 - **Limited dtypes.** v0.1 ships fp32 / fp64 internally. fp16, bf16, fp8 (e4m3, e5m2), int arrive in P9 with accumulator handling. Until then, callers should pre-cast.
 - **No autograd.** PyTorch and JAX wrap their einsum with autograd; moeinsum is a primitive.
 

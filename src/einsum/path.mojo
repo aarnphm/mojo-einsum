@@ -5,10 +5,14 @@ to perform pairwise contractions. The interface mirrors `opt_einsum`:
 
   - `greedy`            — reduced_size heuristic, O(n * k) per step
   - `optimal`           — DP over subsets (Bellman-Held-Karp), n ≤ 16
-  - `auto`              — `optimal` if n ≤ 4, else `greedy`
+  - `branch-all`        — best-first DFS over all candidates, FLOP-pruned
+  - `branch-2`          — DFS limited to the top-2 candidates per node
+  - `branch-1`          — DFS limited to top-1 (collapses to greedy)
   - `random-greedy`     — 32 deterministic noisy-greedy trials
+  - `auto`              — opt_einsum threshold table: optimal (n≤4),
+                          branch-all (n≤6), branch-2 (n≤8), greedy after
+  - `naive`             — left-to-right baseline
   - `explicit(path)`    — caller-supplied path
-  - (P4 extension) `branch` families.
 
 The output is a `ContractionPath`: a `List[(lhs_idx, rhs_idx)]` of
 pairwise step indices, working-set semantics — operand indices refer to
@@ -19,7 +23,8 @@ Cost model: `reduced_size = size(A) + size(B) - size(A⊗B)`. opt_einsum's
 default; correlates well with FLOPs for typical ML-shaped contractions
 but undervalues FLOP/memory-divergent ops (Cardoso et al. 2024,
 arxiv 2405.09644 propose a corrected cost). v0.1 ships pure
-`reduced_size`.
+`reduced_size`. The branch family ranks candidates by reduced_size but
+prunes the DFS frontier by *FLOP* upper bound seeded from greedy.
 """
 
 from einsum.parse import EinsumEquation, ELLIPSIS_LABEL
@@ -404,6 +409,164 @@ def _emit_path_dfs(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Branch family — best-first DFS, FLOP-pruned
+# ─────────────────────────────────────────────────────────────────────
+
+
+def branch_path(
+    eq: EinsumEquation,
+    label_sizes: List[Int],
+    nbranch: Int = -1,
+) raises -> List[ContractionStep]:
+    """Best-first DFS over the contraction tree, pruned by current-best FLOPs.
+
+    Args:
+        nbranch:  at each interior node, recurse into the top `nbranch`
+                  candidates ranked by reduced_size. ``-1`` expands
+                  every candidate (`branch-all`); ``2`` is `branch-2`;
+                  ``1`` is `branch-1`, which by construction returns
+                  the greedy path (the top-1 candidate at every level
+                  is exactly what greedy already picks).
+
+    The initial FLOP upper bound is seeded by a greedy pass — branch
+    is therefore *never worse* than greedy. For n ≤ 8 a full tree
+    walk is tractable; the threshold is enforced by `auto_path`
+    rather than baked in here, so callers can opt into deeper search
+    if they know their workload.
+    """
+    var n = eq.n_operands()
+    if n < 2:
+        return List[ContractionStep]()
+
+    var greedy_steps = greedy_path(eq, label_sizes)
+    if nbranch == 1:
+        # Short-circuit: greedy *is* the top-1-candidate-at-every-level
+        # path, by definition of `greedy_path`'s tiebreakers.
+        return greedy_steps^
+
+    var best_flops = _path_total_flops(eq, label_sizes, greedy_steps)
+    var best_path = greedy_steps^
+
+    var working = List[List[Int]]()
+    for i in range(n):
+        working.append(eq.inputs[i].copy())
+    var steps = List[ContractionStep]()
+
+    _branch_recurse(
+        eq.output,
+        label_sizes,
+        nbranch,
+        working,
+        steps,
+        0,
+        best_flops,
+        best_path,
+    )
+    return best_path^
+
+
+def _branch_recurse(
+    final_output: List[Int],
+    label_sizes: List[Int],
+    nbranch: Int,
+    working: List[List[Int]],
+    steps: List[ContractionStep],
+    current_flops: Int,
+    mut best_flops: Int,
+    mut best_path: List[ContractionStep],
+) raises -> None:
+    if len(working) == 1:
+        if current_flops < best_flops:
+            best_flops = current_flops
+            best_path = steps.copy()
+        return
+
+    if current_flops >= best_flops:
+        return  # prune — this partial path can't beat the current best
+
+    # Enumerate every (i, j) candidate and its cost numbers. At the
+    # depths branch is used for (n ≤ 8), n_cand ≤ 28 — selection sort
+    # is faster than instantiating a heap.
+    var n_w = len(working)
+    var lhs_list = List[Int]()
+    var rhs_list = List[Int]()
+    var rs_list = List[Int]()
+    var fl_list = List[Int]()
+    var out_list = List[List[Int]]()
+
+    for i in range(n_w):
+        for j in range(i + 1, n_w):
+            var others = List[List[Int]]()
+            for k in range(n_w):
+                if k != i and k != j:
+                    others.append(working[k].copy())
+            var out = _step_output_labels(working[i], working[j], others, final_output)
+            var rs = _reduced_size_cost(working[i], working[j], out, label_sizes)
+            var fl = _flop_cost(working[i], working[j], out, label_sizes)
+            lhs_list.append(i)
+            rhs_list.append(j)
+            rs_list.append(rs)
+            fl_list.append(fl)
+            out_list.append(out^)
+
+    var n_cand = len(lhs_list)
+    var order = List[Int]()
+    for i in range(n_cand):
+        order.append(i)
+    # Selection sort by (reduced_size desc, flops asc).
+    for i in range(n_cand):
+        var best = i
+        for j in range(i + 1, n_cand):
+            var rj = rs_list[order[j]]
+            var rb = rs_list[order[best]]
+            var swap = False
+            if rj > rb:
+                swap = True
+            elif rj == rb and fl_list[order[j]] < fl_list[order[best]]:
+                swap = True
+            if swap:
+                best = j
+        if best != i:
+            var t = order[i]
+            order[i] = order[best]
+            order[best] = t
+
+    var limit: Int = n_cand
+    if nbranch >= 1 and nbranch < n_cand:
+        limit = nbranch
+
+    for ci in range(limit):
+        var c = order[ci]
+        var li = lhs_list[c]
+        var ri = rhs_list[c]
+        var fl = fl_list[c]
+
+        # Early prune at the child level — saves the recursion cost.
+        if current_flops + fl >= best_flops:
+            continue
+
+        var new_working = List[List[Int]]()
+        for k in range(n_w):
+            if k != li and k != ri:
+                new_working.append(working[k].copy())
+        new_working.append(out_list[c].copy())
+
+        var new_steps = steps.copy()
+        new_steps.append(ContractionStep(li, ri))
+
+        _branch_recurse(
+            final_output,
+            label_sizes,
+            nbranch,
+            new_working,
+            new_steps,
+            current_flops + fl,
+            best_flops,
+            best_path,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Auto dispatch
 # ─────────────────────────────────────────────────────────────────────
 
@@ -412,15 +575,20 @@ def auto_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
 ) raises -> List[ContractionStep]:
-    """opt_einsum's `auto` threshold table — DP up to n=4, greedy after.
+    """opt_einsum's `auto` threshold table.
 
-    The full opt_einsum table also has `branch-all` for n≤5 and
-    `branch-2` for n≤7 between optimal and greedy; we ship the
-    simplified threshold here, branch family is a future addition.
+    n ≤ 4:   `optimal` DP — tractable.
+    5 ≤ n ≤ 6:  `branch-all` — exhaustive DFS, pruned by greedy's bound.
+    7 ≤ n ≤ 8:  `branch-2`  — DFS limited to top-2 candidates per node.
+    n ≥ 9:   `greedy` — pure heuristic, no DFS.
     """
     var n = eq.n_operands()
     if n <= 4:
         return optimal_path(eq, label_sizes)
+    if n <= 6:
+        return branch_path(eq, label_sizes, -1)
+    if n <= 8:
+        return branch_path(eq, label_sizes, 2)
     return greedy_path(eq, label_sizes)
 
 
@@ -569,8 +737,9 @@ def compute_path(
 ) raises -> List[ContractionStep]:
     """Dispatch to the named algorithm.
 
-    `algorithm ∈ {"greedy", "optimal", "auto", "naive", "random-greedy"}`.
-    "naive" is deterministic left-to-right pairing, useful as a baseline.
+    Supported algorithms: `greedy`, `optimal`, `auto`, `naive`,
+    `random-greedy`, `branch-all`, `branch-2`, `branch-1`. "naive"
+    is deterministic left-to-right pairing, useful as a baseline.
     """
     if algorithm == String("greedy"):
         return greedy_path(eq, label_sizes)
@@ -582,11 +751,18 @@ def compute_path(
         return naive_path(eq)
     if algorithm == String("random-greedy"):
         return random_greedy_path(eq, label_sizes)
+    if algorithm == String("branch-all"):
+        return branch_path(eq, label_sizes, -1)
+    if algorithm == String("branch-2"):
+        return branch_path(eq, label_sizes, 2)
+    if algorithm == String("branch-1"):
+        return branch_path(eq, label_sizes, 1)
     raise Error(
         String(
             "compute_path: unknown algorithm '",
             algorithm,
-            "'. Supported: greedy, optimal, auto, naive, random-greedy.",
+            "'. Supported: greedy, optimal, auto, naive, random-greedy, ",
+            "branch-all, branch-2, branch-1.",
         )
     )
 
