@@ -1,6 +1,6 @@
 # Plan verification — claim → test map
 
-The plan's `## Verification` section makes eight claims. This doc pins each one to the test that exercises it, so reviewers can audit coverage without grepping.
+The plan's `## Verification` section makes eight claims. Each row below pins one claim to the test that exercises it.
 
 Paths are repo-relative. Python counts are commit-time; rerun `pytest --collect-only -q` for current numbers. Mojo tests live under `tests/mojo/` and run via `mojo run -I src tests/mojo/<file>.mojo`.
 
@@ -17,7 +17,7 @@ Paths are repo-relative. Python counts are commit-time; rerun `pytest --collect-
 | `tests/python/test_property.py` | Hypothesis-generated random shapes + label permutations against `np.einsum`. |
 | `tests/python/test_explicit_path.py` | Caller-supplied paths produce identical results to planner-chosen paths. |
 
-Plan asks for ≥150 cases; hand-authored + JAX corpus + hypothesis clears it.
+Hand-authored + JAX corpus + hypothesis clears ≥150.
 
 ---
 
@@ -31,6 +31,7 @@ Plan asks for ≥150 cases; hand-authored + JAX corpus + hypothesis clears it.
 | `tests/python/test_opt_einsum_parity.py::test_optimal_matches_opt_einsum_optimal` | Same corpus, n ≤ 8 subset; asserts exact FLOP equality on the Bellman-Held-Karp output. |
 | `tests/python/test_random_greedy_band.py` | n ∈ {12, 16, 20, 25, 30}; `random-greedy-128` FLOPs ≤ opt_einsum DP × 1.05. Also pins N=128 ≤ N=32 (monotone in trials) and N=1 = greedy (no-noise degenerate). |
 | `tests/python/test_path.py` | Hand-verified paths for the Bellman matrix chain, BMM, attention, star network, MoE routing. |
+| `tests/mojo/smoke_compute_path.mojo` | Mojo-side `compute_path` smoke on n ∈ {12, 16, 20} across the full algorithm family. Asserts well-formedness (step count = n-1, indices in `[0, working_set_size)`, no self-pairs) and `branch-1 ≡ greedy`. Path quality stays in the Python parametric tests; this catches shape / index regressions in the planner glue. |
 
 ---
 
@@ -43,6 +44,7 @@ Plan asks for ≥150 cases; hand-authored + JAX corpus + hypothesis clears it.
 | `tests/python/test_cache_and_edges.py` | LRU eviction at the size cap; MRU promotion; clear behavior; concurrent.futures-driven 8-thread × 32-iter stress with an RLock-backed cache. |
 | `tests/python/test_path.py::test_path_cache_hit_returns_fresh_list` | Cache hits return fresh lists, so caller mutation doesn't pollute subsequent hits. |
 | `tests/python/test_bench_cli.py::test_module_entry_cache_bench` | Subprocess invocation of `moeinsum-bench --cache-bench`: clears `PLAN_CACHE`, times one cold call and `--repeats` hot calls, emits `cold_ms` / `hot_ms_median` / `cache_speedup_ratio`. Ratio asserted `> 0` only — perf-counter noise dominates at small sizes. |
+| `docs/fixtures/cache_bench_example.json` | Frozen `--cache-bench` snapshot (`ij,jk,kl->il` on M3-class arm64 / Darwin). Schema of record; magnitudes drift across machines. The ~1.065 hot/cold ratio matches §3: the reference backend's per-call compute dominates, so parse+plan win is small in absolute time. |
 
 ---
 
@@ -100,17 +102,16 @@ moeinsum-bench "ij,jk->ik" --shapes 1024,1024 1024,1024 --sweep-optimizers --vs-
 moeinsum-bench "bij,bjk->bik" --shapes 32,128,128 32,128,128 --repeats 100
 ```
 
-JSON schema validated by `tests/python/test_bench_cli.py` (8 subprocess cases).
+JSON schema validated by `tests/python/test_bench_cli.py` (11 subprocess cases, including `--compare` / `--compare-engines`).
 
 ---
 
 ## Outstanding (non-gated, actionable now)
 
-1. **`--cache-bench` JSON fixture committed alongside docs.** One representative invocation, captured as a committed file, makes §3's claim auditable without re-running the bench.
-2. **Mojo `compute_path` smoke-test on n ≥ 12 chains.** `tests/mojo/smoke_path_cost.mojo` covers the helpers; an integration test would catch regressions in the planner glue.
+None. The audit-trail items — cache-bench JSON fixture and Mojo `compute_path` smoke — shipped at `docs/fixtures/cache_bench_example.json` and `tests/mojo/smoke_compute_path.mojo`.
 
 ---
 
 ## Plan items still gated
 
-§4, §5, §7-row-7, and §8 above are blocked on hardware or the FFI seam. Design at `docs/ffi.md`.
+§4, §5, §7-row-7, §8 are blocked on hardware or the FFI seam. Design at `docs/ffi.md`. The `_interop.py` fp32-demotion bug that forces `test_einsum_jax_dlpack` into xfail is non-gated but parked at the user's prior request (xfail over fix).
