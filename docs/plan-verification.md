@@ -120,4 +120,4 @@ None. The audit-trail items - cache-bench JSON fixture and Mojo `compute_path` s
 
 ## Plan items still gated
 
-Section 5 (GETT) and Section 8 (cross-platform bench JSON) remain blocked - GETT on P11/P12, the JSON on running `moeinsum-bench` on the B200 box. Design at `docs/ffi.md`. The `_interop.py` fp32-demotion bug that forces `test_einsum_jax_dlpack` into xfail is non-gated but parked at the user's prior request (xfail over fix).
+Section 5 (GETT) and Section 8 (cross-platform bench JSON) remain blocked - GETT on P11/P12, the JSON on running `moeinsum-bench` on the B200 box. Design at `docs/ffi.md`. The jax/jaxlib `source_kind` alias bug that previously parked `test_einsum_jax_dlpack` was resolved at 7d6dc34; the round-trip now confirms jax-in → jax-out.

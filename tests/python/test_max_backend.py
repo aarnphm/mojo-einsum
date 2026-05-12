@@ -27,6 +27,15 @@ pytestmark = pytest.mark.skipif(
     ("ij,jk,kl->il", [(3, 4), (4, 5), (5, 6)]),
     ("ij,ij->", [(3, 4), (3, 4)]),
     ("ij->i", [(3, 4)]),
+    # Empty K (no contracted dims) -> outer product via degenerate matmul.
+    # `_lower_pair` collapses k=1 via `_product([]) == 1`, reshape gives
+    # (M, 1) x (1, N) -> (M, N). If the special-case path ever regresses,
+    # this is the first thing that breaks.
+    ("i,j->ij", [(3,), (4,)]),
+    # Pure unary transpose: no reduce, no permute axis dropped, just a
+    # permutation. Goes through `_reduce_out_labels` -> noop, then
+    # `_permute_if_needed` flips axes. Untested before this row.
+    ("ij->ji", [(3, 4)]),
   ],
 )
 def test_max_cpu_matches_numpy(eq: str, shapes: list[tuple[int, ...]]) -> None:
