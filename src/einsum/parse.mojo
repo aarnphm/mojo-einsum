@@ -24,9 +24,11 @@ Supported syntax:
   - transpose        "ij->ji"
   - whitespace inside the equation is stripped.
 
-Not handled here (in `plan.mojo`):
+Not handled here (in `plan.mojo` / `backends/reference.mojo`):
   - shape validation (this only sees label structure, not shapes).
-  - broadcasting with size-1 dims.
+  - size-1 broadcast (cross-operand `(1, N) -> N` resolution lives in
+    `_resolve_label_sizes`; the validator below only checks label
+    structure, not extents).
 """
 
 # `String`, `StringSlice`, `List`, `chr`, `ord` are in the Mojo prelude - no
