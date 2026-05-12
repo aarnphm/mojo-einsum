@@ -120,6 +120,23 @@ The `...` token stands for "any number of leading dimensions."
 
 moeinsum's parser represents ellipsis with a sentinel label (`-1`) on the first pass. `expand_ellipsis(eq, operand_ranks)` substitutes fresh label IDs once operand ranks are known. Deferred expansion keeps the parser independent of operand shapes.
 
+## Size-1 broadcast
+
+A label can take size 1 in one operand and size $N$ in another. The size-1 axis is replicated $N$ times along that label.
+
+```python
+a.shape == (1, 3, 4)  # cij
+b.shape == (5, 4, 6)  # cjk
+np.einsum("cij,cjk->cik", a, b)  # → (5, 3, 6); `c` resolves to 5
+```
+
+The reference backend strides the size-1 axis with stride 0; it contributes nothing to the flat offset. The MAX backend emits `ops.broadcast_to` after permutation, before the matmul reshape.
+
+Two checks the validator enforces:
+
+- The mismatch must involve a literal 1. `(3, 4) ij` vs `(5, 4) ij` raises - $M \neq N$ is a real conflict, not a broadcast.
+- Cross-operand only. Repeated labels inside one operand (`ii->` on a non-square matrix) are diagonal extraction over mismatched extents, and numpy rejects it.
+
 ## Attention as einsum
 
 Multi-head attention is two einsums and a softmax. Given:
