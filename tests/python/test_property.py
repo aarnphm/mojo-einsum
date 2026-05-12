@@ -560,12 +560,32 @@ def test_deterministic_must_be_bool() -> None:
   seed=st.integers(min_value=0, max_value=2**31 - 1),
 )
 def test_size_one_matmul_matches_numpy(seed: int) -> None:
-  """A label with the same size (1) on both operands must still
-  contract cleanly. Catches any "size 1 means broadcast" assumption
-  that would diverge from numpy.einsum's strict semantics."""
+  """`j` has size 1 in both operands: the symmetric case. This is the
+  degenerate matmul that pre-existed broadcast support - now that
+  cross-operand broadcast is wired up, this case still has to pass
+  through cleanly via the (1, 1) → 1 path before merge ever fires."""
   rng = np.random.default_rng(seed)
   a = rng.standard_normal((3, 1))
   b = rng.standard_normal((1, 5))
+  expected = np.einsum("ij,jk->ik", a, b)
+  actual = moeinsum.einsum("ij,jk->ik", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
+
+
+@given(
+  m=st.integers(min_value=1, max_value=5),
+  k=st.integers(min_value=2, max_value=5),
+  n=st.integers(min_value=1, max_value=5),
+  seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_size_one_broadcast_matmul_matches_numpy(m: int, k: int, n: int, seed: int) -> None:
+  """Per-label size-1 broadcast on contract axis: lhs has `j=1`, rhs
+  has `j=k`, output is `(m, n)`. The contraction reduces to
+  `a[i,0] * sum_j b[j,k]`. Hypothesis sweeps over the surviving free
+  dims to make sure the broadcast holds regardless of free-axis sizes."""
+  rng = np.random.default_rng(seed)
+  a = rng.standard_normal((m, 1))
+  b = rng.standard_normal((k, n))
   expected = np.einsum("ij,jk->ik", a, b)
   actual = moeinsum.einsum("ij,jk->ik", a, b)
   np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
