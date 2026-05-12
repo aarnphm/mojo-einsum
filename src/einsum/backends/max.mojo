@@ -1,10 +1,11 @@
 """Mojo-side MAX backend over TileTensor pairwise contractions.
 
-The public Python `backend="max[:cpu|gpu]"` path still owns MAX Graph execution
-in `python/moeinsum/_interop_max.py`. This module is the Mojo backend seam: it
-consumes the repo's `ContractionPlan`, packs pairwise steps into BMM-shaped
-TileTensor buffers, and lowers the contraction itself through
-`linalg.bmm.batched_matmul`.
+The public Python `backend="max:cpu"` path enters this module through
+`python/moeinsum/_interop_max.py` and the `_native` extension. `max:gpu` and
+explicit graph tests still use the Python MAX Graph interop path while the
+native GPU ABI matures. This module consumes the repo's `ContractionPlan`, packs
+pairwise steps into BMM-shaped TileTensor buffers, and lowers the contraction
+itself through `linalg.bmm.batched_matmul`.
 
 The current ABI is still flat `UnsafePointer[Float64]` plus runtime
 shape/stride lists, so this implementation materializes TTGT-style packed

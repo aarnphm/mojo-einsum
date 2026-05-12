@@ -1,10 +1,20 @@
 def parse_equation(eq: str) -> dict[str, object]: ...
+def parse_equation_expanded(
+  eq: str,
+  operand_shapes: list[list[int]],
+) -> dict[str, object]: ...
 def einsum_reference(
   eq: str,
   operands_flat: list[list[float]],
   operand_shapes: list[list[int]],
 ) -> tuple[list[float], list[int]]: ...
 def einsum_native(
+  eq: str,
+  operands_flat: list[list[float]],
+  operand_shapes: list[list[int]],
+  path: list[tuple[int, ...]],
+) -> tuple[list[float], list[int]]: ...
+def einsum_max_cpu(
   eq: str,
   operands_flat: list[list[float]],
   operand_shapes: list[list[int]],

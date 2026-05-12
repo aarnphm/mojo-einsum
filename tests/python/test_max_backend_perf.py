@@ -1,12 +1,11 @@
-"""Plan section 4 - backend="max" overhead vs raw max.graph matmul.
+"""Plan section 4 - Python MAX Graph interop overhead vs raw max.graph matmul.
 
 Both paths compile to the identical max.graph matmul kernel under the
-hood; the ratio captures *our shim* only - equation parse cache hit,
-path cache hit, model cache hit, plus the same buffer marshalling
-both sides have to pay. After warmup that's ~us of work against the
-matmul's ~hundreds-of-us, so the headline claim ("within 5%") holds
-by construction. We assert a 50% slack to absorb microbenchmark
-noise; tighter bounds belong in a benchmark suite, not a unit test.
+hood; the ratio captures the Python graph shim only - equation parse
+cache hit, path cache hit, model cache hit, plus the same buffer
+marshalling both sides have to pay. Public `backend="max:cpu"` now
+routes through the Mojo TileTensor backend, so this file calls the
+graph interop executor directly.
 
 Correctness is pinned alongside the perf ratio so this single file
 covers both - a slow shim that returns wrong data is a regression on
@@ -51,10 +50,11 @@ def _build_raw_matmul(shape_a: tuple[int, int], shape_b: tuple[int, int]) -> obj
 
 
 @pytest.mark.parametrize("size", [256, 512])
-def test_max_backend_matches_raw_max_graph_matmul(size: int) -> None:
+def test_max_graph_interop_matches_raw_max_graph_matmul(size: int) -> None:
   """Numerical: same compiled kernel, same result, atol=fp32 epsilon."""
   import moeinsum
   from max.driver import CPU, Buffer
+  from moeinsum import _interop_max
 
   rng = np.random.default_rng(0)
   a = rng.standard_normal((size, size)).astype(np.float32)
@@ -64,13 +64,14 @@ def test_max_backend_matches_raw_max_graph_matmul(size: int) -> None:
   raw_out = raw_model.execute(Buffer.from_numpy(a).to(device), Buffer.from_numpy(b).to(device))[0]
   expected = raw_out.to(CPU()).to_numpy()
 
-  actual = moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+  path = moeinsum.einsum_path("ij,jk->ik", a.shape, b.shape)
+  actual = _interop_max._execute_max_graph("ij,jk->ik", [a, b], path, "max:cpu")
 
   np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=1e-5)
 
 
 @pytest.mark.parametrize("size", [512])
-def test_max_backend_overhead_within_factor(size: int) -> None:
+def test_max_graph_interop_overhead_within_factor(size: int) -> None:
   """Hot-path: ours / raw max.graph <= 1.5x. Slack is for CI noise.
 
   The plan's 5% headline holds in practice (both paths share the
@@ -81,12 +82,14 @@ def test_max_backend_overhead_within_factor(size: int) -> None:
   """
   import moeinsum
   from max.driver import CPU, Buffer
+  from moeinsum import _interop_max
 
   rng = np.random.default_rng(0)
   a = rng.standard_normal((size, size)).astype(np.float32)
   b = rng.standard_normal((size, size)).astype(np.float32)
 
   raw_model, device = _build_raw_matmul(a.shape, b.shape)
+  path = moeinsum.einsum_path("ij,jk->ik", a.shape, b.shape)
 
   def call_raw() -> None:
     bufs = [Buffer.from_numpy(arr).to(device) for arr in (a, b)]
@@ -94,13 +97,13 @@ def test_max_backend_overhead_within_factor(size: int) -> None:
     out.to(CPU()).to_numpy()
 
   def call_moeinsum() -> None:
-    moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
+    _interop_max._execute_max_graph("ij,jk->ik", [a, b], path, "max:cpu")
 
   raw_med = _median_seconds(call_raw)
   ours_med = _median_seconds(call_moeinsum)
 
   ratio = ours_med / raw_med
   assert ratio <= 1.5, (
-    f"backend='max:cpu' added >50% overhead vs raw max.graph matmul at size {size}: "
+    f"MAX Graph interop added >50% overhead vs raw max.graph matmul at size {size}: "
     f"ours={ours_med * 1e3:.3f}ms raw={raw_med * 1e3:.3f}ms ratio={ratio:.3f}"
   )

@@ -62,24 +62,24 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 
 ## Roadmap
 
-| Phase | Status  | What                                                                                                             |
-| ----- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| P0    | done    | Scaffolding                                                                                                      |
-| P1    | done    | Reference backend + parser + plan + numpy bridge                                                                 |
-| P2    | done    | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                                           |
-| P3    | done    | Unary kernels (transpose / diagonal / sum / trace)                                                               |
-| P4    | done    | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family                                   |
-| P5    | done    | Default MAX Graph backend shipped through `python/moeinsum/_interop_max.py`; Mojo MAX seam lowers pairwise steps through `TileTensor` / `linalg.bmm.batched_matmul` |
-| P6    | done    | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred                           |
-| P7    | done    | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                                                     |
-| P8    | done    | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out)                         |
-| P9    | done    | Precision parameters wired; MAX uses fp32/fp64 accumulators and preserves bf16 output dtype                      |
-| P10   | done    | Python-side `backend="max:gpu"` validation on B200; broader hardware sweeps remain task #32                      |
-| P11   | done    | Native flat-buffer backend shipped; optimized CPU GETT is post-v0.1 perf work                                    |
-| P12   | done    | Native flat-buffer backend shipped; optimized GPU SM90 WGMMA is post-v0.1 perf work                              |
-| P13   | done    | Benchmark CLI (`moeinsum-bench` script)                                                                          |
-| P14   | done    | `MaxGraphBackend`: lowering spec and executable bridge collapsed into `_interop_max.py`; `_max_graph.py` removed |
-| P15   | done    | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                                        |
+| Phase | Status | What                                                                                                                                       |
+| ----- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| P0    | done   | Scaffolding                                                                                                                                |
+| P1    | done   | Reference backend + parser + plan + numpy bridge                                                                                           |
+| P2    | done   | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                                                                     |
+| P3    | done   | Unary kernels (transpose / diagonal / sum / trace)                                                                                         |
+| P4    | done   | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family                                                             |
+| P5    | done   | `backend="max:cpu"` routes through the Mojo MAX TileTensor backend; Python MAX Graph remains for accelerator and graph introspection paths |
+| P6    | done   | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred                                                     |
+| P7    | done   | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                                                                               |
+| P8    | done   | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out)                                                   |
+| P9    | done   | Precision parameters wired; MAX uses fp32/fp64 accumulators and preserves bf16 output dtype                                                |
+| P10   | done   | Python-side `backend="max:gpu"` validation on B200; broader hardware sweeps remain task #32                                                |
+| P11   | done   | Native flat-buffer backend shipped; optimized CPU GETT is post-v0.1 perf work                                                              |
+| P12   | done   | Native flat-buffer backend shipped; optimized GPU SM90 WGMMA is post-v0.1 perf work                                                        |
+| P13   | done   | Benchmark CLI (`moeinsum-bench` script)                                                                                                    |
+| P14   | done   | `MaxGraphBackend`: lowering spec and executable bridge collapsed into `_interop_max.py`; `_max_graph.py` removed                           |
+| P15   | done   | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                                                                  |
 
 `done` = shipped. Lower-level kernel perf work can still exist after a phase closes; it lives in the roadmap notes, not as a second public API.
 

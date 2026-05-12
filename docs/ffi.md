@@ -3,11 +3,13 @@ title: FFI design for max backend
 date: 2026/05/11
 ---
 
-P5 now has two layers. The Python MAX Graph backend makes
-`backend="max[:cpu|gpu]"` executable for the shipped equation grammar. The Mojo
-MAX backend seam in `src/einsum/backends/max.mojo` also consumes
-`ContractionPlan`, packs runtime-strided operands into BMM-shaped `TileTensor`
-buffers, and calls `linalg.bmm.batched_matmul` for pairwise steps.
+P5 now has two executable layers. Public `backend="max:cpu"` enters the Mojo MAX
+backend through `_native.einsum_max_cpu`. The Python MAX Graph backend remains
+the accelerator path for `max` / `max:gpu`, the graph-introspection path, and
+the accumulator-dtype path. The Mojo MAX backend in
+`src/einsum/backends/max.mojo` consumes `ContractionPlan`, packs
+runtime-strided operands into BMM-shaped `TileTensor` buffers, and calls
+`linalg.bmm.batched_matmul` for pairwise steps.
 
 The remaining FFI rewire matters because P11 (native CPU GETT), P12 (native
 GPU SM90), deterministic low-precision controls, and zero-copy device ownership
@@ -16,26 +18,35 @@ buffers.
 
 ## Today's FFI surface
 
-`src/lib.mojo` exposes six `PythonModuleBuilder` entries:
+`src/lib.mojo` exposes eight `PythonModuleBuilder` entries:
 
-| Function                       | Operand contract                | Return                       |
-| ------------------------------ | ------------------------------- | ---------------------------- |
-| `parse_equation(eq)`           | pure equation parse             | `dict[str, object]`          |
-| `einsum_reference(eq, fl, sh)` | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
-| `einsum_native(eq, fl, sh, p)` | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
-| `einsum_path(eq, sh)`          | shape lists                     | `list[tuple[int, ...]]`      |
-| `einsum_compute_path(eq, ...)` | shape lists + algorithm name    | `list[tuple[int, ...]]`      |
-| `path_cost(eq, sh, p)`         | shape lists + working-set path  | `dict[str, object]`          |
+| Function                        | Operand contract                | Return                       |
+| ------------------------------- | ------------------------------- | ---------------------------- |
+| `parse_equation(eq)`            | pure equation parse             | `dict[str, object]`          |
+| `parse_equation_expanded(eq)`   | equation + operand shape ranks  | `dict[str, object]`          |
+| `einsum_reference(eq, fl, sh)`  | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
+| `einsum_native(eq, fl, sh, p)`  | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
+| `einsum_max_cpu(eq, fl, sh, p)` | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
+| `einsum_path(eq, sh)`           | shape lists                     | `list[tuple[int, ...]]`      |
+| `einsum_compute_path(eq, ...)`  | shape lists + algorithm name    | `list[tuple[int, ...]]`      |
+| `path_cost(eq, sh, p)`          | shape lists + working-set path  | `dict[str, object]`          |
 
-`einsum_reference` and `einsum_native` allocate an `UnsafePointer[Float64]` per
-operand and memcpy the Python list in. End-to-end ownership makes that fine for
-the reference backend. The current executable MAX Graph path bypasses this Mojo
-FFI and builds a `max.graph.Graph` in Python, then feeds MAX `Buffer` objects.
+`einsum_reference`, `einsum_native`, and `einsum_max_cpu` allocate an
+`UnsafePointer[Float64]` per operand and memcpy the Python list in. End-to-end
+ownership makes that fine for the reference backend. For MAX CPU it is a
+temporary proof of routing; the graph path still builds a `max.graph.Graph` in
+Python, then feeds MAX `Buffer` objects.
 
 `src/einsum/backends/max.mojo` now proves the Mojo-side lowering shape, but it
 still receives flat `UnsafePointer[Float64]` buffers. That copy becomes a
 per-call tax on buffers the caller already owns through DLPack. The next FFI
 boundary should let the caller's pointer land inside a `TileTensor` directly.
+
+## Current flat FFI entry - `einsum_max_cpu_py`
+
+`src/lib.mojo` currently exposes `einsum_max_cpu(eq, operands_flat, operand_shapes, path)` to Python. It reuses the native parser and planner, expands ellipsis from operand ranks, builds a `ContractionPlan`, stages row-major `Float64` buffers, and calls `src/einsum/backends/max.mojo::execute_max[target="cpu"]`.
+
+That flat-list ABI is intentionally temporary. It proves the public `backend="max:cpu"` route reaches the Mojo MAX TileTensor backend, but it still pays Python list marshalling and fp64 staging costs. The zero-copy path below is the real performance ABI.
 
 ## Future FFI entry - `einsum_max_py`
 
@@ -128,9 +139,15 @@ env MODULAR_PATH= MODULAR_DERIVED_PATH= \
 ## Python-side wiring
 
 `python/moeinsum/__init__.py` already takes a `backend` parameter. Today,
-`backend.startswith("max")` dispatches to `_interop_max.execute_max`, the
-Python MAX Graph bridge. The Mojo cutover replaces that call with the FFI
-entry above:
+`backend.startswith("max")` dispatches to `_interop_max.execute_max`.
+That function routes `backend="max:cpu"` without `accum_dtype` through the
+flat native FFI entry, routes `backend="max"` to the same native CPU path
+only when MAX reports no accelerator, and keeps MAX Graph for `max:gpu`,
+accelerator-backed `max`, graph introspection, and explicit accumulator
+dtype requests.
+
+The future capsule cutover replaces the flat-list call with the FFI entry
+above:
 
 ```python
 _BACKENDS = ("reference", "native", "max", "max:cpu", "max:gpu")
@@ -153,37 +170,41 @@ they do not silently fall back to reference.
 
 ## Test plan
 
-The harness already catches the Python MAX Graph surface and should be
-expanded, not replaced, when the Mojo cutover lands:
+The harness now separates the public native MAX CPU route from the Python MAX
+Graph interop route:
 
 - `tests/python/test_max_backend.py` pins matmul, BMM, 3-operand chains,
   outer product, unary transpose, reduce-sum, size-1 broadcast, and
-  ellipsis on the executable MAX Graph path.
+  ellipsis on public `backend="max:cpu"`, plus a graph-cache bypass assertion.
 - `tests/python/test_max_backend_bf16.py` pins bf16 drift growth and
   dtype round-trip through MAX.
 - `tests/python/test_backend_stubs.py` keeps `lowering_spec`
   independent of `max.graph` and pins the same classifier consumed by
-  the executable MAX bridge.
+  the executable graph interop bridge.
+- `tests/python/test_max_backend_perf.py` keeps the raw MAX Graph comparison
+  on the explicit graph interop executor, since public `max:cpu` now enters
+  the Mojo TileTensor backend.
 - `tests/python/test_property.py` remains the broad parser / planner /
-  reference invariant suite. When the Mojo backend covers the full
-  grammar, add it to the same parity matrix instead of making a weaker
-  side harness.
+  reference invariant suite. The zero-copy MAX FFI should join that parity
+  matrix once the flat-list ABI is gone.
 
 ## Phase ladder
 
 **Mojo TileTensor MAX cutover:**
 
 1. Packed pairwise lowering in `src/einsum/backends/max.mojo`: done.
-2. Implement `einsum_max_py` in `src/lib.mojo` with the rank
-   monomorphization block.
+2. Flat `einsum_max_cpu_py` in `src/lib.mojo`: done. Future work replaces it
+   with capsule-backed `einsum_max_py` plus the rank monomorphization block.
 3. Replace packed TTGT staging with zero-copy `RuntimeLayout` / `TileTensor`
    views when operand strides can express the B/M/K and B/K/N layouts.
 4. Add dtype-specialized entry points instead of the current fp64-only flat ABI.
 5. Thread the existing Mojo `target` parameter through `einsum_max_py` so
    `backend="max:gpu"` can instantiate `execute_max[target="gpu"]`.
-6. Redirect `einsum(backend="max", ...)` from the Python MAX Graph bridge
-   only if the Mojo FFI equals the current `_interop_max.py` feature
-   surface and wins enough perf to justify owning it.
+6. Redirected `einsum(backend="max:cpu", ...)` from the Python MAX Graph
+   bridge to the Mojo MAX backend. Default `backend="max"` still uses MAX
+   Graph when an accelerator exists; move that only after the Mojo FFI equals
+   the current `_interop_max.py` feature surface and wins enough perf to
+   justify owning it.
 7. Add `_interop.to_dlpack`.
 8. Run `tests/python/test_numpy_parity.py` with `backend="max"`.
 
@@ -234,10 +255,11 @@ expanded, not replaced, when the Mojo cutover lands:
   materialize lhs as `[batch, m, k]`, materialize rhs as `[batch, k, n]`, call
   `linalg.bmm.batched_matmul`, then expose the step result in `out_labels`
   order. Unary steps still use Mojo view/reduce helpers.
-- `python/moeinsum/_interop_max.py` owns the Python-side lowering spec and
-  executable MAX Graph bridge. `classify_pair(...)`, `lowering_spec(...)`,
-  and `MaxGraphBackend.execute(...)` share that file; `_max_graph.py` was
-  deleted once MAX became a default dependency.
+- `python/moeinsum/_interop_max.py` owns Python-side MAX routing, lowering
+  spec, and the executable MAX Graph bridge. Public `max:cpu` calls
+  `_native.einsum_max_cpu`; `classify_pair(...)`, `lowering_spec(...)`, and
+  `MaxGraphBackend.execute(...)` still share the graph interop machinery.
+  `_max_graph.py` was deleted once MAX became a default dependency.
 - Dim classification, path optimization, plan IR, and the test harness
   have coverage. The remaining work here is FFI/device/dtype polish rather than
   a missing Mojo MAX implementation.

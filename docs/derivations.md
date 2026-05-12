@@ -46,7 +46,7 @@ When the would-be permutation is exactly a 2D transpose of the inner block, the 
 1. Materialize the permute into a fresh buffer (TTGT - Transpose-Transpose-GEMM-Transpose).
 2. Fuse the permute into the GEMM's tile-loading code (see [[#3. GETT: GEMM-like Tensor-Tensor multiplication|GETT]]).
 
-The executable MAX Graph path does (1) when the permute is non-trivial; `NativeOptimizedBackend` is the planned home for (2).
+The executable MAX Graph path and current native MAX CPU pack path do (1) when the permute is non-trivial; `NativeOptimizedBackend` is the planned home for (2).
 
 ### The inner BMM kernel
 

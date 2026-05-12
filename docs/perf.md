@@ -7,11 +7,13 @@ _See [[derivations]] for the math behind these rules._
 
 ## backends
 
-moeinsum exposes five backend names. `reference` is still the default because it covers the full grammar with fp64 internal accumulation. `native` is the Mojo plan executor for the full grammar. `max` is the fast executable MAX Graph path for float32, float64, and bfloat16 tensors.
+moeinsum exposes five backend names. `reference` is still the default because it covers the full grammar with fp64 internal accumulation. `native` is the Mojo plan executor for the full grammar. `max:cpu` is the native Mojo MAX TileTensor path. `max` selects MAX Graph on an accelerator when one exists and otherwise uses the native MAX CPU path; `max:gpu` forces MAX Graph accelerator placement.
 
 **`reference`** - naive nested loop, fp64 internally. Use it as the oracle when a result diverges. It is also the right choice for tensor totals under $10^4$ elements, where BMM launch overhead can dominate. It scales as O(product-of-all-label-sizes), so large contractions need another backend.
 
-**`max` / `max:cpu` / `max:gpu`** - builds a MAX Graph for each signature and lowers repeated-label operands with `gather_nd`, pairwise contraction steps to batched matmul-shaped graph ops, and unary reductions with `sum` / `squeeze`. It supports matmul, batched matmul, outer products, multi-operand chains, size-1 broadcast, ellipsis, diagonal / trace, unary transpose, and reduce-sum. `max` chooses GPU when MAX reports an accelerator, otherwise CPU; use `max:gpu` or `max:cpu` to force placement.
+**`max:cpu`** - calls the native Mojo MAX backend in `src/einsum/backends/max.mojo` through `_native.einsum_max_cpu`. Pairwise steps pack operands into `[batch, m, k]` and `[batch, k, n]` TileTensor buffers, call `linalg.bmm.batched_matmul`, then restore the requested label order. The current Python ABI still detours through flat fp64 host lists, so this is the correctness cutover rather than the final zero-copy perf path.
+
+**`max` / `max:gpu`** - uses MAX Graph when an accelerator is selected. It builds a MAX Graph for each signature and lowers repeated-label operands with `gather_nd`, pairwise contraction steps to batched matmul-shaped graph ops, and unary reductions with `sum` / `squeeze`. `max` falls back to native MAX CPU when MAX reports no accelerator; `max:gpu` raises if no accelerator exists.
 
 **`native`** - Mojo flat-buffer plan executor today, GETT-style kernels later. It covers the full grammar with deterministic reductions, then can become the home for contractions with heavy permutes, especially non-adjacent contracted dims accounting for $\ge 30\%$ of work, and for fp16/bf16/fp8 accumulator control at the WGMMA/MFMA opcode.
 
@@ -40,7 +42,7 @@ The explicit-path API is available now: call `einsum_path` yourself, edit or per
 
 ## accumulator dtype
 
-`dtype=` controls the public output dtype. `accum_dtype=` controls the internal precision where the backend exposes a real knob. `reference` accumulates through fp64. MAX casts pairwise matmul inputs and reduction inputs to fp32 or fp64 before the graph op, rejects fp16/bf16 accumulators, and casts the public result back to `dtype=`. CPU MAX does not support bf16 graph inputs, so `backend="max:cpu"` compiles bf16 calls as fp32 graphs and returns bf16 arrays at the API boundary.
+`dtype=` controls the public output dtype. `accum_dtype=` controls the internal precision where the backend exposes a real knob. `reference` accumulates through fp64. The native `max:cpu` flat ABI currently stages fp64 buffers and casts the public result back to `dtype=`. Passing `accum_dtype=` on a MAX backend routes through the MAX Graph path, which casts pairwise matmul inputs and reduction inputs to fp32 or fp64 before the graph op and rejects fp16/bf16 accumulators. CPU MAX Graph does not support bf16 graph inputs, so graph execution compiles bf16 calls as fp32 graphs and returns bf16 arrays at the API boundary.
 
 | Input dtype | Default `accum_dtype` | When to override                                                          |
 | ----------- | --------------------- | ------------------------------------------------------------------------- |
@@ -53,7 +55,7 @@ The explicit-path API is available now: call `einsum_path` yourself, edit or per
 
 ## deterministic reductions
 
-`reference` is deterministic because it is a serial scalar loop. The executable MAX Graph path follows MAX's matmul implementation; on GPU this means parallel reduction order and tensor-core math. The error is at the unit-roundoff / TF32 level for fp32 shapes we tested - fine for benchmark work, not a bitwise audit trail.
+`reference` is deterministic because it is a serial scalar loop. MAX Graph and the native MAX TileTensor path follow MAX's matmul implementation; on GPU this means parallel reduction order and tensor-core math. The error is at the unit-roundoff / TF32 level for fp32 shapes we tested - fine for benchmark work, not a bitwise audit trail.
 
 `deterministic=True` is accepted by the public API and honored by `reference`. The MAX/native backends still need a real deterministic lowering before that flag means "force serial K-summation" outside the reference path.
 

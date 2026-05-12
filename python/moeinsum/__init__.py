@@ -3,9 +3,9 @@
 For v0.1:
   - `einsum(eq, *operands, backend, optimize, accum_dtype)` accepts
     numpy ndarrays and DLPack-capable framework arrays. The reference
-    and `native` backends ship for full correctness; `max` / `max:cpu` /
-    `max:gpu` run the shipped equation grammar through MAX Graph for
-    float32, float64, and bfloat16 tensors.
+    and `native` backends ship for full correctness; `max:cpu` runs the
+    native Mojo MAX TileTensor backend, while `max` / `max:gpu` use MAX
+    Graph when a GPU is selected.
   - `einsum_path(eq, *shapes, optimize)` returns the contraction pair
     sequence the planner chose.
   - `parse_equation(eq)` is a debugging surface that returns the IR.
@@ -189,9 +189,10 @@ def einsum(
                    `jax.Array`, `mlx.array`, `cupy.ndarray`, nested
                    Python lists.
       backend:     ``"reference"`` for the full correctness backend.
-                   ``"max"`` uses MAX Graph on GPU when available and
-                   CPU otherwise; ``"max:gpu"`` / ``"max:cpu"`` force
-                   placement for the MAX Graph backend.
+                   ``"max:cpu"`` uses the native Mojo MAX TileTensor
+                   backend. ``"max"`` uses MAX Graph on GPU when
+                   available and the native MAX CPU backend otherwise;
+                   ``"max:gpu"`` forces MAX Graph GPU placement.
                    ``"native"`` uses the Mojo plan executor.
       optimize:    Path optimizer name. ``"auto"`` (default),
                    ``"greedy"``, ``"optimal"``, ``"random-greedy"``,
