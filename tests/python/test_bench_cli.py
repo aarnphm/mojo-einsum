@@ -209,6 +209,24 @@ def test_module_entry_invalid_equation() -> None:
   assert proc.returncode != 0
 
 
+def test_module_entry_max_backend_gates_on_loadable(
+  monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  """Without the gate, `--backend max:cpu` crashes with a 30-line
+  `dlopen` stacktrace when MAX is ABI-incompatible (bazel-cache vs
+  PyPI fork on `libAsyncRTRuntimeGlobals.dylib`). Verify the CLI
+  rejects the request at argparse time instead."""
+  from moeinsum import bench as bench_mod  # noqa: PLC0415
+
+  monkeypatch.setattr(bench_mod, "_max_is_loadable", lambda: False)
+  with pytest.raises(SystemExit) as excinfo:
+    bench_mod.main(["ij,jk->ik", "--shapes", "3,4", "4,5", "--backend", "max:cpu"])
+  assert excinfo.value.code == 2
+  err = capsys.readouterr().err
+  assert "max:cpu" in err
+  assert "max` runtime did not load" in err
+
+
 def test_module_entry_dtype_bfloat16_routes_via_ml_dtypes() -> None:
   """`--dtype bfloat16` should accept ml_dtypes-backed operands and
   record dtype="bfloat16" in the JSON. The reference backend handles

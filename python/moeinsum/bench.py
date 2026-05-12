@@ -74,6 +74,7 @@ import numpy as np
 
 from . import einsum, einsum_path
 from ._cache import PLAN_CACHE
+from ._max_graph import is_loadable as _max_is_loadable
 
 _tqdm: Callable[..., Iterable[int]] | None
 try:
@@ -419,6 +420,13 @@ def main(argv: list[str] | None = None) -> int:
   show_progress = sys.stderr.isatty() if args.progress is None else args.progress
   if show_progress and _tqdm is None:
     p.error("progress output requires tqdm; run with `uv run --group bench moeinsum-bench ...`")
+  if args.backend.startswith("max") and not _max_is_loadable():
+    p.error(
+      f"--backend {args.backend!r} requested but the `max` runtime did not load. "
+      "Install with `uv pip install -e '.[max]'` and ensure `python -c \"import max._core\"` "
+      "succeeds (a bazel-cache vs PyPI ABI fork on libAsyncRTRuntimeGlobals.dylib is the "
+      "usual cause locally - see python/moeinsum/_max_graph.py::is_loadable)."
+    )
   if args.compare_engines is not None:
     try:
       compare_engines = _parse_compare_engines(args.compare_engines)
