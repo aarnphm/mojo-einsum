@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
-from moeinsum._cost import path_cost
+from moeinsum import path_cost
 
 # ---------------------------------------------------------------------
 # Strategies - well-formed equation pieces
@@ -170,8 +170,7 @@ def test_optimal_flops_le_greedy(
 ) -> None:
   """`optimal` must produce a path with FLOP count <= `greedy`'s.
 
-  Skip cases that exercise the path-cost helper's known limitations
-  (repeated labels within an operand and so on)."""
+  Keep a small safety net around invalid generated cases."""
   eq, shapes = case
   try:
     greedy = moeinsum.einsum_path(eq, *shapes, optimize="greedy")
@@ -179,8 +178,7 @@ def test_optimal_flops_le_greedy(
     cg = cast(int, path_cost(eq, shapes, greedy)["total_flops"])
     co = cast(int, path_cost(eq, shapes, optimal)["total_flops"])
   except ValueError:
-    # path_cost rejects ellipsis-and-similar; the generator never
-    # produces those, but the safety net is cheap.
+    # The generator should avoid invalid equations, but the safety net is cheap.
     return
   assert co <= cg, f"optimal FLOPs {co} > greedy FLOPs {cg} for {eq!r} @ {shapes}"
 

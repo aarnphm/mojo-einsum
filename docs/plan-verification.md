@@ -53,10 +53,11 @@ Hand-authored + JAX corpus + hypothesis clears $\ge 150$.
 
 > Matmul-shaped einsums within 5% of direct `linalg.batched_matmul` on the same shapes.
 
-Status: **shipped** via the Python MAX Graph backend (`backend="max"`). Both paths compile to the same `max.graph.ops.matmul` kernel; the shim adds a model-cache lookup. The Mojo-side `linalg.batched_matmul` dispatch is deferred behind `mojo-include-paths` against the modular monorepo.
+Status: **shipped** via the Python MAX Graph backend (`backend="max"`). Both paths compile to the same `max.graph.ops.matmul` kernel; the shim adds a model-cache lookup. The Mojo-side MAX seam also smoke-tests `linalg.bmm.batched_matmul` through `TileTensor` pack buffers, while public Python dispatch still routes through MAX Graph.
 
 | Where                                                                                  | Scope                                                                                                                                         |
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/mojo/smoke_parse.mojo::check_max_backend_matmul`                                | Mojo seam: `src/einsum/backends/max.mojo::execute_max` lowers `ij,jk->ik` and `ji,jk->ki` pairwise steps through packed `TileTensor` BMM.      |
 | `tests/python/test_max_backend_perf.py::test_max_backend_matches_raw_max_graph_matmul` | Numerical: `backend="max:cpu"` output matches a hand-built `max.graph.ops.matmul` graph on `(256,256)` / `(512,512)` fp32 within `atol=1e-5`. |
 | `tests/python/test_max_backend_perf.py::test_max_backend_overhead_within_factor`       | Hot-path ratio: 5 warmup + 25 timed iters, ours / raw `<= 1.5x` at `size=512`; the wider bound accounts for CI noise.                         |
 
@@ -66,7 +67,7 @@ Status: **shipped** via the Python MAX Graph backend (`backend="max"`). Both pat
 
 > `'abcd,dcba->'`-class contractions within $2\times$ of cuTENSOR (GPU) / TBLIS (CPU) at the GETT phase.
 
-Status: **partially shipped**. `backend="native"` executes the Mojo flat-buffer plan engine and is covered by parity tests; the optimized GETT CPU/GPU kernels remain the P11/P12 performance blocker. Bench harness lives in `python/moeinsum/bench.py` (`--sweep-optimizers`, `--vs-numpy`).
+Status: **semantic backend shipped, optimized kernels pending**. `backend="native"` executes the Mojo flat-buffer plan engine and is covered by parity tests; optimized GETT CPU/GPU kernels remain post-v0.1 perf work. Bench harness lives in `python/moeinsum/_cli/bench.py` (`--sweep-optimizers`, `--vs-numpy`).
 
 ---
 
@@ -109,7 +110,7 @@ moeinsum-bench "ij,jk->ik" --shapes 1024,1024 1024,1024 --sweep-optimizers --vs-
 moeinsum-bench "bij,bjk->bik" --shapes 32,128,128 32,128,128 --repeats 100
 ```
 
-JSON schema validated by `tests/python/test_bench_cli.py` (13 subprocess cases + 1 in-process `main(...)` call for the `--backend max:*` `is_loadable()` gate, covering `--include-path`, `--sweep-optimizers`, `--vs-numpy`, `--compare-engines`, `--cache-bench`, `--dtype bfloat16` skip-handshake, `random-greedy-N`, invalid-equation and explicit-path rejection, `[project.scripts]` console entry).
+JSON schema validated by `tests/python/test_bench_cli.py` (subprocess coverage for `--include-path`, `--sweep-optimizers`, `--vs-numpy`, `--compare-engines`, `--cache-bench`, `--dtype bfloat16`, `random-greedy-N`, invalid-equation and explicit-path rejection, `[project.scripts]` console entry).
 
 ---
 
@@ -121,4 +122,4 @@ No current non-gated items are listed. The cache-bench JSON fixture and Mojo `co
 
 ## Plan items still gated
 
-Section 5 (GETT) and Section 8 (cross-platform bench JSON) remain blocked: GETT waits on P11/P12, and the JSON waits on running `moeinsum-bench` on the B200 box. Design lives in `docs/ffi.md`.
+Section 5's optimized GETT target and Section 8's cross-platform bench JSON remain blocked: GETT is post-v0.1 perf work, and the JSON waits on running `moeinsum-bench` on the B200 box. Design lives in `docs/ffi.md`.

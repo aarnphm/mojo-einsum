@@ -21,18 +21,6 @@ import time
 import numpy as np
 import pytest
 
-try:
-  from moeinsum._max_graph import is_loadable as _is_loadable  # noqa: PLC0415
-
-  HAS_MAX = _is_loadable()
-except ImportError:
-  HAS_MAX = False
-
-pytestmark = pytest.mark.skipif(
-  not HAS_MAX,
-  reason="max.graph not installed or ABI-incompatible with moeinsum._native in this env",
-)
-
 
 def _median_seconds(fn: object, *, warmup: int = 5, iters: int = 25) -> float:
   for _ in range(warmup):

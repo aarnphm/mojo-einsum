@@ -57,7 +57,7 @@ Once we're at $(B, M, K) \times (B, K, N) \to (B, M, N)$, the workhorse is `lina
 - CPU + Apple Silicon $\to$ `apple_accelerate.mojo` calls vDSP/AMX through Accelerate.
 - CPU + AVX-512 $\to$ BLIS-style micro-kernel with packing.
 
-For non-BMM-shaped contractions - small K, small M, weird strides - we pay the indexing math of the BMM kernel without amortizing it over enough FLOPs. GETT is the workaround.
+For non-BMM-shaped contractions—small K, small M, weird strides—we pay the indexing math of the BMM kernel without amortizing it over enough FLOPs (tip: we are going to use GETT here, see below.)
 
 ## 2. Contraction-path cost models
 

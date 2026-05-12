@@ -20,10 +20,10 @@ date: 2026/05/10
 | Hypergraph paths             | out of scope           | out of scope         | external (cotengra) | external (cotengra) | n/a           | n/a            |
 | Compile-time paths           | planned                | out of scope         | out of scope        | partial (jit-trace) | partial (JIT) | out of scope   |
 | Per-call-site kernel cache   | done (P7)              | out of scope         | out of scope        | done (jit cache)    | done (plan)   | out of scope   |
-| GETT fused permute           | skeleton (P11/P12)     | out of scope         | out of scope        | out of scope        | done          | done           |
+| GETT fused permute           | post-v0.1 perf work    | out of scope         | out of scope        | out of scope        | done          | done           |
 | CPU tensor-core (AMX)        | done (via MAX)         | partial (Accelerate) | partial             | partial             | n/a           | partial        |
 | GPU tensor-core (WGMMA)      | done (via MAX)         | n/a                  | done                | done                | done          | n/a            |
-| Configurable accumulator     | wired, backend-limited | partial              | partial             | done                | done          | n/a            |
+| Configurable accumulator     | fp32/fp64 on MAX       | partial              | partial             | done                | done          | n/a            |
 | Deterministic reduction      | reference-only         | partial              | partial             | partial             | out of scope  | n/a            |
 | NumPy interop                | done                   | n/a                  | via conversion      | via conversion      | via cupy      | via conversion |
 | PyTorch interop              | done (DLPack, P8)      | n/a                  | n/a                 | via DLPack          | via cupy      | n/a            |
@@ -45,9 +45,9 @@ date: 2026/05/10
 ## Gaps
 
 - **No cotengra equivalent.** Tensor-network workloads compute the path externally. opt_einsum's family covers the current ML-shaped target cases; quantum-circuit simulation needs cotengra.
-- **No optimized GETT yet.** P11/P12 kernel work remains. Awkward permutes go through flat-buffer/native or TTGT-style MAX lowering until then.
+- **No optimized GETT yet.** Kernel work remains post-v0.1. Awkward permutes go through flat-buffer/native or TTGT-style MAX lowering until then.
 - **MAX diagonal lowering is explicit.** The executable MAX Graph path lowers repeated labels through `gather_nd`, so trace / diagonal cases now run there. It is a materializing graph op today, while the Mojo native path can still become a stride-only view in the GETT cutover.
-- **Low precision is backend-limited.** bf16 is covered on the MAX Graph path. fp16, fp8 (e4m3, e5m2), and opcode-level accumulator control wait on the Mojo TileTensor/native cutover.
+- **Low precision is backend-limited.** bf16 is covered on the MAX Graph path with fp32 accumulation and bf16 output. fp16, fp8 (e4m3, e5m2), and opcode-level accumulator control wait on dtype-specialized Mojo TileTensor/native kernels.
 - **No autograd.** PyTorch and JAX wrap einsum with autograd; moeinsum is a primitive.
 
 ## Project seams

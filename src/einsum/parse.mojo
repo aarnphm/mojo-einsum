@@ -62,9 +62,7 @@ struct EinsumEquation(Copyable, Movable):
 
 def _is_label_byte(c: UInt8) -> Bool:
     """True for ASCII letters a-zA-Z."""
-    return (c >= UInt8(ord("a")) and c <= UInt8(ord("z"))) or (
-        c >= UInt8(ord("A")) and c <= UInt8(ord("Z"))
-    )
+    return (c >= UInt8(ord("a")) and c <= UInt8(ord("z"))) or (c >= UInt8(ord("A")) and c <= UInt8(ord("Z")))
 
 
 def _strip_whitespace(s: String) -> String:
@@ -73,9 +71,7 @@ def _strip_whitespace(s: String) -> String:
     var bytes = s.as_bytes()
     for i in range(len(bytes)):
         var c = bytes[i]
-        if c != UInt8(ord(" ")) and c != UInt8(ord("\t")) and c != UInt8(
-            ord("\n")
-        ):
+        if c != UInt8(ord(" ")) and c != UInt8(ord("\t")) and c != UInt8(ord("\n")):
             out += chr(Int(c))
     return out^
 
@@ -100,9 +96,7 @@ def _tokenize_operand(
         var c = bytes[i]
         # ellipsis: "..."
         if c == UInt8(ord(".")):
-            if i + 2 >= n or bytes[i + 1] != UInt8(ord(".")) or bytes[
-                i + 2
-            ] != UInt8(ord(".")):
+            if i + 2 >= n or bytes[i + 1] != UInt8(ord(".")) or bytes[i + 2] != UInt8(ord(".")):
                 raise Error(
                     String(
                         "einsum parse error in operand ",
@@ -152,9 +146,7 @@ def parse(eq_in: String) raises -> EinsumEquation:
     var has_explicit_output: Bool
     if arrow_idx >= 0:
         input_part = String(StringSlice(eq)[byte=0:arrow_idx])
-        output_part = String(
-            StringSlice(eq)[byte=arrow_idx + 2 : len(eq.as_bytes())]
-        )
+        output_part = String(StringSlice(eq)[byte = arrow_idx + 2 : len(eq.as_bytes())])
         has_explicit_output = True
     else:
         input_part = eq
@@ -209,9 +201,7 @@ def parse(eq_in: String) raises -> EinsumEquation:
     )
 
 
-def expand_ellipsis(
-    mut eq: EinsumEquation, operand_ranks: List[Int]
-) raises:
+def expand_ellipsis(mut eq: EinsumEquation, operand_ranks: List[Int]) raises:
     """In-place substitute `ELLIPSIS_LABEL` with fresh labels.
 
     Ellipsis width per operand is `operand_ranks[i] - explicit_label_count`.

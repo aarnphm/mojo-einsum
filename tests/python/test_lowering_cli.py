@@ -16,7 +16,7 @@ def _run_lowering(*args: str) -> subprocess.CompletedProcess[str]:
   env = os.environ.copy()
   env.pop("__PYVENV_LAUNCHER__", None)
   return subprocess.run(
-    [_python(), "-m", "moeinsum.lowering", *args],
+    [_python(), "-m", "moeinsum._cli.lowering", *args],
     capture_output=True,
     text=True,
     env=env,

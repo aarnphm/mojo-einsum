@@ -21,7 +21,7 @@ import pytest
 opt_einsum = pytest.importorskip("opt_einsum")
 
 import moeinsum  # noqa: E402  - importorskip must run before the import
-from moeinsum._cost import path_cost  # noqa: E402
+from moeinsum import path_cost  # noqa: E402
 
 # ---------------------------------------------------------------------
 # Test corpus - tensor-network-flavored cases

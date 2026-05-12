@@ -1,5 +1,9 @@
 [build-system]
-requires = ["mohaus>=0.1,<0.2"]
+requires = [
+  "mohaus>=0.1",
+  "mojo==0.26.2.0",
+  "max==26.2.0",
+]
 build-backend = "mohaus.backend"
 
 [project]
@@ -16,14 +20,13 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Mathematics",
 ]
-dependencies = ["numpy>=1.26"]
+dependencies = ["numpy>=2", "max==26.2.0", "ml_dtypes>=0.5", "mohaus>=0.1"]
 
 [project.scripts]
-moeinsum-bench = "moeinsum.bench:main"
-moeinsum-lowering = "moeinsum.lowering:main"
+moeinsum-bench = "moeinsum._cli.bench:main"
+moeinsum-lowering = "moeinsum._cli.lowering:main"
 
 [project.optional-dependencies]
-max = ["max"]
 torch = ["torch>=2.4"]
 jax = ["jax>=0.4.30"]
 mlx = ["mlx>=0.20"]
@@ -35,6 +38,7 @@ dev = [
   "ruff>=0.5",
   "ty",
   "ipython",
+  "mojo==0.26.2.0",
 ]
 
 [dependency-groups]
@@ -63,10 +67,9 @@ exclude = ["tests/**"]
 [tool.ty.rules]
 all = "error"
 
-[tool.uv.sources]
-mojo = { index = "modular-nightly" }
-
-[[tool.uv.index]]
-name = "modular-nightly"
-url = "https://whl.modular.com/nightly/simple/"
-explicit = true
+[tool.uv]
+index-strategy = "unsafe-best-match"
+extra-index-url = [
+  "https://aarnphm.github.io/mohaus/simple",
+  "https://whl.modular.com/nightly/simple/",
+]

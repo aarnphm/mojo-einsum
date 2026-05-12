@@ -261,9 +261,7 @@ def test_integer_bit_exact_reduction_large_k() -> None:
 
 
 def test_accum_dtype_unknown_raises() -> None:
-  """Garbage `accum_dtype` raises a TypeError up front, not from the
-  FFI. Defends against typos that would otherwise propagate silently
-  once MaxBackend wires the parameter through."""
+  """Garbage `accum_dtype` raises a TypeError up front, not from the FFI."""
   a = np.eye(3)
   b = np.eye(3)
   with pytest.raises(TypeError, match="accum_dtype"):
@@ -280,8 +278,8 @@ def test_accum_dtype_known_dtypes_accepted() -> None:
     out = moeinsum.einsum("ij,jk->ik", a, b, accum_dtype=dt)
     assert isinstance(out, np.ndarray)
     # Output dtype is governed by `dtype=`, not `accum_dtype=`; the
-    # latter only affects the internal accumulator (a future MaxBackend
-    # concern). Sanity-check via a result value comparison.
+    # latter only affects the internal accumulator. Sanity-check via a
+    # result value comparison on the reference path.
     np.testing.assert_allclose(out, a @ b)
 
 

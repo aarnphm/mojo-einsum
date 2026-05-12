@@ -6,10 +6,8 @@ import argparse
 import json
 import sys
 
-from . import _native
-from ._cost import path_cost
-from ._max_backend import lowering_spec as _max_lowering_spec
-from ._max_graph import plan_to_graph_spec
+from .. import _native, path_cost
+from .._max_backend import lowering_spec as _max_lowering_spec
 
 _OPTIMIZE = (
   "naive",
@@ -64,13 +62,13 @@ def _path_cost_record(eq: str, shapes: list[tuple[int, ...]], path: list[tuple[i
 
 def _plan_graph_record(eq: str, shapes: list[tuple[int, ...]], path: list[tuple[int, ...]]) -> dict[str, object]:
   try:
-    spec = plan_to_graph_spec(eq, shapes, path)
+    spec = _max_lowering_spec(eq, shapes, path)
   except Exception as exc:  # noqa: BLE001
     return {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"}
   return {
     "status": "ok",
-    "ops": [{"kind": kind, **payload} for kind, payload in spec.ops],
-    "result_index": spec.result_index,
+    "ops": spec["ops"],
+    "result_shape": spec["result_shape"],
   }
 
 
@@ -115,6 +113,13 @@ def _max_record(
     "device_policy": device_policy,
     "implementation": "python/moeinsum/_max_backend.py::_lower_graph",
     "compiler_target": "MAX Graph",
+    "mojo_backend": {
+      "implementation": "src/einsum/backends/max.mojo::execute_max",
+      "abi": "UnsafePointer[Float64] flat buffers with TTGT-style pack buffers",
+      "pairwise_target": "TileTensor + linalg.bmm.batched_matmul",
+      "unary_target": "Mojo stride views and reduce_sum_axes",
+      "target_policy": "compile-time target parameter; public FFI backend plumbing still pending",
+    },
   })
   return spec
 

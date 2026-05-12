@@ -31,11 +31,12 @@ to force.
 - **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `branch`, `random-greedy`, and `auto` algorithms.
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
 - **MAX Graph backend** (`python/moeinsum/_max_backend.py`): executable `backend="max[:cpu|gpu]"` for the shipped equation grammar, including ellipsis, size-1 broadcast, diagonal / trace, unary transpose, reduce-sum, and matmul-shaped pairwise steps.
+- **Mojo MAX backend seam** (`backends/max.mojo`): consumes `ContractionPlan`, packs flat runtime-strided operands into BMM-shaped `TileTensor` buffers, and lowers pairwise steps through `linalg.bmm.batched_matmul`.
 - **Native backend** (`backends/native.mojo`): executable Mojo flat-buffer plan executor for the full grammar, with SIMD/GPU GETT kernel cutover pending.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `moeinsum-bench` script (installed by `pip install -e .`), JSON output, optional stderr progress bars, and compare rows for numpy / opt_einsum / jax / torch / mlx.
-- **Tests**: Python and Mojo coverage for numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / bench-CLI / hypothesis-property / MAX-backend coverage. Optional framework and MAX-runtime tests skip when the dependency or dlopen path is unavailable.
+- **Tests**: Python and Mojo coverage for numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / bench-CLI / hypothesis-property / MAX-backend coverage. Optional framework tests skip when those frameworks are unavailable; MAX is a default dependency now.
 
 ## Docs
 
@@ -64,23 +65,23 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P2    | done    | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                                           |
 | P3    | done    | Unary kernels (transpose / diagonal / sum / trace)                                                               |
 | P4    | done    | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family                                   |
-| P5    | partial | Python MAX Graph + Mojo flat-buffer `MaxBackend` shipped; `TileTensor` / `linalg.batched_matmul` cutover pending |
+| P5    | done    | Default MAX Graph backend shipped through `python/moeinsum/_max_backend.py`; Mojo MAX seam lowers pairwise steps through `TileTensor` / `linalg.bmm.batched_matmul` |
 | P6    | done    | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred                           |
 | P7    | done    | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                                                     |
 | P8    | done    | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out)                         |
-| P9    | done\*  | Precision parameters wired; bf16 covered on the MAX Graph path                                                   |
-| P10   | done    | Python-side `backend="max:gpu"` validation on B200; Mojo-side `target="gpu"` waits on P5                         |
-| P11   | partial | Native flat-buffer backend shipped; SIMD CPU GETT kernel cutover pending                                         |
-| P12   | partial | Native flat-buffer backend shipped; GPU SM90 WGMMA kernel cutover pending                                        |
+| P9    | done    | Precision parameters wired; MAX uses fp32/fp64 accumulators and preserves bf16 output dtype                      |
+| P10   | done    | Python-side `backend="max:gpu"` validation on B200; broader hardware sweeps remain task #32                      |
+| P11   | done    | Native flat-buffer backend shipped; optimized CPU GETT is post-v0.1 perf work                                    |
+| P12   | done    | Native flat-buffer backend shipped; optimized GPU SM90 WGMMA is post-v0.1 perf work                              |
 | P13   | done    | Benchmark CLI (`moeinsum-bench` script)                                                                          |
-| P14   | partial | `MaxGraphBackend`: plan-to-graph spec + executable bridge shipped; whole-graph fusion polish pending             |
+| P14   | done    | `MaxGraphBackend`: lowering spec and executable bridge collapsed into `_max_backend.py`; `_max_graph.py` removed |
 | P15   | done    | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                                        |
 
-`done` = shipped; `done\*` = shipped first pass, real polish deferred to P5; `partial` = useful executable surface shipped with a named lower-level cutover still pending; `pending` = not shipped yet.
+`done` = shipped. Lower-level kernel perf work can still exist after a phase closes; it lives in the roadmap notes, not as a second public API.
 
 ## Architecture
 
-We create a small plan IR to let backend decides how to consume this.
+We create a small plan IR so each backend can decide how to consume it.
 
 - The parser produces an `EinsumEquation` IR with int-interned labels.
 - The path optimizer chooses a pairwise contraction order.
@@ -88,6 +89,7 @@ We create a small plan IR to let backend decides how to consume this.
 - A backend consumes the plan and decides how each step executes
   - the `reference` backend uses a naive global-index loop
   - `max` builds a MAX Graph over pairwise batched-matmul lowerings;
+  - the Mojo MAX backend seam packs the current flat-buffer ABI into `TileTensor` BMM calls;
   - `native` runs the Mojo flat-buffer plan executor today, then swaps in SIMD/GPU kernels with GETT-style fused permute.
 
 See [[derivations#1. The BMM lowering|BMM lowering section]] for proof.

@@ -29,7 +29,7 @@ import pytest
 opt_einsum = pytest.importorskip("opt_einsum")
 
 import moeinsum  # noqa: E402  - importorskip must run before the import
-from moeinsum._cost import path_cost  # noqa: E402
+from moeinsum import path_cost  # noqa: E402
 
 
 def _chain_shapes(n: int, dim_lo: int = 2, dim_hi: int = 16) -> tuple[str, list[tuple[int, int]]]:

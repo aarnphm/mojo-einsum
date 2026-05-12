@@ -6,7 +6,7 @@ inside the same process miss (e.g. broken `argparse` choices, broken
 script entry, broken JSON dump).
 
 Two invocation paths are validated:
-  - `python -m moeinsum.bench ...`
+  - `python -m moeinsum._cli.bench ...`
   - `moeinsum-bench ...` (the `[project.scripts]` entry installed by
     `pip install -e .`)
 
@@ -68,13 +68,13 @@ def _parse_json(stdout: str) -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------
-# `python -m moeinsum.bench` entry
+# `python -m moeinsum._cli.bench` entry
 # ---------------------------------------------------------------------
 
 
 def test_module_entry_single_optimizer() -> None:
   args = _bench_args("ij,jk->ik", ["3,4", "4,5"])
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   for key in (
@@ -101,7 +101,7 @@ def test_module_entry_single_optimizer() -> None:
 
 def test_module_entry_with_include_path() -> None:
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], include_path=True)
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0
   rec = _parse_json(proc.stdout)
   assert "path" in rec
@@ -111,7 +111,7 @@ def test_module_entry_with_include_path() -> None:
 
 def test_module_entry_sweep_optimizers() -> None:
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], sweep_optimizers=True)
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0
   rec = _parse_json(proc.stdout)
   assert "results" in rec
@@ -134,7 +134,7 @@ def test_module_entry_sweep_optimizers() -> None:
 
 def test_module_entry_vs_numpy() -> None:
   args = _bench_args("ij,jk->ik", ["8,8", "8,8"], vs_numpy=True)
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0
   rec = _parse_json(proc.stdout)
   for key in ("numpy_ms_median", "numpy_ms_min", "numpy_ms_max", "vs_numpy_ratio"):
@@ -144,7 +144,7 @@ def test_module_entry_vs_numpy() -> None:
 
 def test_module_entry_compare_engines() -> None:
   args = _bench_args("ij,jk->ik", ["4,4", "4,4"], compare_engines="numpy,opt_einsum,mlx")
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   comparisons = rec["comparisons"]
@@ -160,7 +160,7 @@ def test_module_entry_compare_engines() -> None:
 def test_module_entry_progress_stays_on_stderr() -> None:
   pytest.importorskip("tqdm")
   args = _bench_args("ij,jk->ik", ["4,4", "4,4"], progress=True)
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   assert rec["equation"] == "ij,jk->ik"
@@ -174,7 +174,7 @@ def test_module_entry_cache_bench() -> None:
   noisy to assert tightly - we just check the schema and that the
   ratio is finite."""
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], cache_bench=True)
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   for key in ("cold_ms", "hot_ms_median", "hot_ms_min", "hot_ms_max", "cache_speedup_ratio"):
@@ -192,7 +192,7 @@ def test_module_entry_records_modular_debug_shortcuts() -> None:
     max_ir_output_dir="/tmp/moeinsum-ir",
     max_op_log_level="trace",
   )
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   assert "source-tracebacks" in rec["modular_debug"]
@@ -203,7 +203,7 @@ def test_module_entry_records_modular_debug_shortcuts() -> None:
 
 def test_module_entry_random_greedy_n() -> None:
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], optimize="random-greedy-16")
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0
   rec = _parse_json(proc.stdout)
   assert rec["optimize"] == "random-greedy-16"
@@ -214,33 +214,15 @@ def test_module_entry_explicit_path_rejected_via_cli() -> None:
   must use the Python API. Verify the CLI rejects an obvious
   attempt with an unknown-optimize error."""
   args = _bench_args("ij,jk->ik", ["3,4", "4,5"], optimize="[(0,1)]")
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode != 0
   assert "unknown optimize" in proc.stderr or "Traceback" in proc.stderr
 
 
 def test_module_entry_invalid_equation() -> None:
   args = _bench_args("i$j,jk->ik", ["3,4", "4,5"])
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode != 0
-
-
-def test_module_entry_max_backend_gates_on_loadable(
-  monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-  """Without the gate, `--backend max:cpu` crashes with a 30-line
-  `dlopen` stacktrace when MAX is ABI-incompatible (bazel-cache vs
-  PyPI fork on `libAsyncRTRuntimeGlobals.dylib`). Verify the CLI
-  rejects the request at argparse time instead."""
-  from moeinsum import bench as bench_mod  # noqa: PLC0415
-
-  monkeypatch.setattr(bench_mod, "_max_is_loadable", lambda: False)
-  with pytest.raises(SystemExit) as excinfo:
-    bench_mod.main(["ij,jk->ik", "--shapes", "3,4", "4,5", "--backend", "max:cpu"])
-  assert excinfo.value.code == 2
-  err = capsys.readouterr().err
-  assert "max:cpu" in err
-  assert "max` runtime did not load" in err
 
 
 def test_module_entry_dtype_bfloat16_routes_via_ml_dtypes() -> None:
@@ -250,7 +232,7 @@ def test_module_entry_dtype_bfloat16_routes_via_ml_dtypes() -> None:
   without MAX installed."""
   pytest.importorskip("ml_dtypes")
   args = _bench_args("ij,jk->ik", ["4,4", "4,4"], dtype="bfloat16")
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   assert rec["dtype"] == "bfloat16"
@@ -263,7 +245,7 @@ def test_module_entry_bfloat16_skips_numpy_comparison() -> None:
   a misleading ratio."""
   pytest.importorskip("ml_dtypes")
   args = _bench_args("ij,jk->ik", ["4,4", "4,4"], dtype="bfloat16", compare_engines="numpy")
-  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
   assert proc.returncode == 0, f"stderr: {proc.stderr}"
   rec = _parse_json(proc.stdout)
   numpy_rec = rec["comparisons"]["numpy"]
@@ -281,7 +263,7 @@ def test_module_entry_bfloat16_skips_numpy_comparison() -> None:
   reason="moeinsum-bench console script not on PATH",
 )
 def test_console_script_entry() -> None:
-  """The `[project.scripts] moeinsum-bench = "moeinsum.bench:main"`
+  """The `[project.scripts] moeinsum-bench = "moeinsum._cli.bench:main"`
   entry must produce the same JSON shape as `python -m`."""
   script = shutil.which("moeinsum-bench") or str(Path(_python()).parent / "moeinsum-bench")
   args = _bench_args("ij,jk->ik", ["3,4", "4,5"])

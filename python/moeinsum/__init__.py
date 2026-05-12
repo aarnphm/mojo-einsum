@@ -26,7 +26,6 @@ import numpy as np
 from numpy.typing import DTypeLike
 
 from ._cache import PLAN_CACHE
-from ._cost import path_cost
 from ._interop import from_numpy as _from_numpy
 from ._interop import source_kind as _source_kind
 from ._interop import to_numpy as _to_numpy
@@ -45,6 +44,9 @@ from ._native import (
 )
 from ._native import (
   parse_equation as _parse_equation_native,
+)
+from ._native import (
+  path_cost as _path_cost_native,
 )
 
 __all__ = [
@@ -157,6 +159,17 @@ def parse_equation(eq: str) -> dict[str, object]:
   return _parse_equation_native(eq)
 
 
+def path_cost(
+  eq: str,
+  shapes: Sequence[Sequence[int]],
+  path: Sequence[Sequence[int]],
+) -> dict[str, object]:
+  """Return FLOP and peak-intermediate accounting for a contraction path."""
+  shape_lists = [list(shape) for shape in shapes]
+  path_steps = [tuple(step) for step in path]
+  return cast("dict[str, object]", _path_cost_native(eq, shape_lists, path_steps))
+
+
 def einsum(
   eq: str,
   *operands: object,
@@ -189,9 +202,9 @@ def einsum(
                    opt_einsum accept the same shape.
       accum_dtype: Internal accumulator precision. None = automatic
                    (fp32 for fp16/bf16 inputs, else match input). Real
-                   low-precision accumulation lands with `MaxBackend`;
-                   today the parameter is forwarded but the reference
-                   backend always accumulates in fp64.
+                   low-precision accumulators are rejected on MAX; fp32
+                   and fp64 accumulator casts are honored there. The
+                   reference backend always accumulates in fp64.
       dtype:       Output dtype; defaults to
                    ``np.result_type(*operands)``.
       return_type: ``"numpy"`` / ``"torch"`` / ``"jax"`` / ``"mlx"`` /
@@ -213,10 +226,10 @@ def einsum(
     raise TypeError(f"deterministic must be bool, got {type(deterministic).__name__}")
   if accum_dtype is not None:
     # Resolve up-front so a typo raises here instead of inside the FFI.
-    # Real low-precision accumulation lands with MaxBackend/native; today
-    # we validate the dtype is known while reference still accumulates in fp64.
+    # Backend-specific support is checked at dispatch; reference still
+    # accumulates in fp64 regardless of this public knob.
     try:
-      np.dtype(accum_dtype)
+      accum_dtype = np.dtype(accum_dtype)
     except TypeError as exc:
       raise TypeError(f"accum_dtype {accum_dtype!r} is not a recognised numpy dtype") from exc
   if backend not in _BACKENDS:
@@ -249,7 +262,7 @@ def einsum(
     else:
       path = einsum_path(eq, *[tuple(a.shape) for a in arrays], optimize=cast("str", optimize))
     max_arrays = [a.astype(dtype, copy=False) for a in arrays]
-    out = _execute_max(eq, max_arrays, path, backend)
+    out = _execute_max(eq, max_arrays, path, backend, accum_dtype=cast("np.dtype | None", accum_dtype))
     if out.dtype != dtype:
       out = out.astype(dtype)
     if return_type is None:

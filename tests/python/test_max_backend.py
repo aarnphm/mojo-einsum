@@ -10,12 +10,7 @@ from __future__ import annotations
 import moeinsum
 import numpy as np
 import pytest
-from moeinsum._max_graph import MaxGraphBackend, is_loadable
-
-pytestmark = pytest.mark.skipif(
-  not is_loadable(),
-  reason="max.graph not installed or ABI-incompatible with moeinsum._native in this env",
-)
+from moeinsum._max_backend import MaxGraphBackend
 
 
 @pytest.mark.parametrize(
@@ -120,6 +115,30 @@ def test_max_backend_model_cache_keys_on_dtype() -> None:
   assert after - before == 2, (
     f"dtype change should produce a fresh compile (cache grows by 2); grew by {after - before}"
   )
+
+
+def test_max_backend_model_cache_keys_on_accum_dtype() -> None:
+  from moeinsum import _max_backend  # noqa: PLC0415
+
+  _max_backend._MODEL_CACHE.clear()
+  a = np.arange(12, dtype=np.float32).reshape(3, 4)
+  b = np.arange(20, dtype=np.float32).reshape(4, 5)
+
+  before = len(_max_backend._MODEL_CACHE)
+  moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu", accum_dtype=np.float32)
+  moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu", accum_dtype=np.float64)
+  after = len(_max_backend._MODEL_CACHE)
+  assert after - before == 2, (
+    f"accum_dtype change should produce a fresh compile (cache grows by 2); grew by {after - before}"
+  )
+
+
+def test_max_backend_rejects_low_precision_accum_dtype() -> None:
+  a = np.arange(12, dtype=np.float32).reshape(3, 4)
+  b = np.arange(20, dtype=np.float32).reshape(4, 5)
+
+  with pytest.raises(NotImplementedError, match="accum_dtype"):
+    moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu", accum_dtype=np.float16)
 
 
 def test_max_backend_model_cache_keys_on_shape() -> None:

@@ -2,17 +2,16 @@
 
 The reference backend always accumulates in fp64, so the drift law for
 bf16 inputs can't be exercised there - hence the plan row was blocked
-until a real bf16-capable backend shipped. `backend="max:cpu"` is that
-backend: MAX Graph's matmul accumulates bf16 inputs in fp32 internally
-and casts back to bf16 for the output.
+until a real low-precision-aware backend shipped. `backend="max:cpu"` is
+that backend: CPU MAX does not accept bf16 graph inputs, so moeinsum
+compiles an fp32 graph for bf16 calls and casts back to bf16 for the
+output.
 
 Two assertions pin the claim:
 
 1. **Bounded drift at K=128 and K=256.** Relative drift against the
-   fp32-computed reference stays under 1% - which is well below
-   the bf16-accum failure mode would produce (sqrt(K)*eps_bf16 ~ 13%
-   at K=256). The output is itself rounded to bf16, so the floor is
-   eps_bf16 ~ 0.008, not zero.
+   fp32-computed reference stays under 1%. The output is rounded to
+   bf16, so the floor is eps_bf16 ~ 0.008, not zero.
 
 2. **Sub-linear growth in K.** Absolute drift from K=64 to K=256 grows
    ~2x (sqrt-K-law signature of fp32-accum), not 4x (linear-K-law
@@ -31,9 +30,8 @@ import pytest
 
 try:
   import ml_dtypes
-  from moeinsum._max_graph import is_loadable as _is_loadable  # noqa: PLC0415
 
-  HAS_BF16 = _is_loadable()
+  HAS_BF16 = True
   BFLOAT16 = np.dtype(ml_dtypes.bfloat16) if HAS_BF16 else None
 except ImportError:
   HAS_BF16 = False
@@ -41,7 +39,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
   not HAS_BF16,
-  reason="max.graph + ml_dtypes required and must dlopen cleanly in this env",
+  reason="ml_dtypes required for bfloat16 test data",
 )
 
 

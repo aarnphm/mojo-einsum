@@ -19,8 +19,8 @@ def einsum_compute_path(
   operand_shapes: list[list[int]],
   algorithm: str,
 ) -> list[tuple[int, ...]]: ...
-def max_graph_spec(
+def path_cost(
   eq: str,
-  operand_shapes: list[tuple[int, ...]],
+  operand_shapes: list[list[int]],
   path: list[tuple[int, ...]],
 ) -> dict[str, object]: ...

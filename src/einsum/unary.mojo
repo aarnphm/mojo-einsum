@@ -19,6 +19,7 @@ from std.memory import UnsafePointer
 struct ShapeStrides(Copyable, Movable):
     """A shape + strides pair, both in elements. Result type for the
     metadata-only view ops (`transpose_view`, `diagonal_view`)."""
+
     var shape: List[Int]
     var strides: List[Int]
 

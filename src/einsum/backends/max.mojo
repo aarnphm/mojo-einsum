@@ -1,25 +1,25 @@
-"""Plan-aware MAX backend over the current flat-buffer ABI.
+"""Mojo-side MAX backend over TileTensor pairwise contractions.
 
-The eventual P5 cutover lowers each `PairwiseStep` to `TileTensor` views and
-`linalg.batched_matmul`. The public ABI in this repo is not there yet:
-`execute_max` still receives flat `Float64` pointers plus explicit shapes and
-strides. This implementation makes that ABI real instead of leaving a stub:
+The public Python `backend="max[:cpu|gpu]"` path still owns MAX Graph execution
+in `python/moeinsum/_max_backend.py`. This module is the Mojo backend seam: it
+consumes the repo's `ContractionPlan`, packs pairwise steps into BMM-shaped
+TileTensor buffers, and lowers the contraction itself through
+`linalg.bmm.batched_matmul`.
 
-  - pairwise steps execute as pairwise contractions over the plan's working set,
-    reducing every label that does not survive into `step.out_labels`,
-  - unary steps compose `diagonal_view`, `transpose_view`, and
-    `reduce_sum_axes`,
-  - intermediate tensors are row-major flat buffers while layout-only unary
-    steps remain strided views.
-
-This is intentionally not the final high-performance MAX kernel path. It is the
-correct executable bridge for the current Mojo-side contract, and it keeps the
-same working-set semantics that the future TileTensor backend must preserve.
+The current ABI is still flat `UnsafePointer[Float64]` plus runtime
+shape/stride lists, so this implementation materializes TTGT-style packed
+intermediates before the TileTensor call. That is the honest cutover point:
+runtime-strided operands enter as flat buffers, pairwise math runs through MAX's
+TileTensor BMM kernel, and a later zero-copy RuntimeLayout path can remove the
+packing when the ABI grows real TileTensor operands.
 """
 
 from std.collections import List
 from std.memory import UnsafePointer
 from std.memory.unsafe_pointer import alloc
+
+from layout import Coord, Idx, TileTensor, row_major
+from linalg.bmm import batched_matmul
 
 from einsum.plan import (
     ContractionPlan,
@@ -108,6 +108,35 @@ def _index_of(labels: List[Int], lbl: Int) -> Int:
     return -1
 
 
+def _append_labels_for_axes(
+    mut out: List[Int],
+    labels: List[Int],
+    axes: List[Int],
+) raises -> None:
+    for i in range(len(axes)):
+        var axis = axes[i]
+        if axis < 0 or axis >= len(labels):
+            raise Error(String("execute_max: axis ", axis, " out of range"))
+        out.append(labels[axis])
+
+
+def _labels_for_axes(labels: List[Int], axes: List[Int]) raises -> List[Int]:
+    var out = List[Int]()
+    _append_labels_for_axes(out, labels, axes)
+    return out^
+
+
+def _concat3(lhs: List[Int], mid: List[Int], rhs: List[Int]) -> List[Int]:
+    var out = List[Int]()
+    for i in range(len(lhs)):
+        out.append(lhs[i])
+    for i in range(len(mid)):
+        out.append(mid[i])
+    for i in range(len(rhs)):
+        out.append(rhs[i])
+    return out^
+
+
 def _single_axis_for_label(
     labels: List[Int],
     lbl: Int,
@@ -190,132 +219,267 @@ def _shape_for_labels(
     return out^
 
 
-def _reduction_labels(
-    lhs_labels: List[Int],
-    rhs_labels: List[Int],
-    out_labels: List[Int],
-) -> List[Int]:
-    """Unique labels from lhs/rhs that are not carried into the step output."""
+def _shape_from_self(
+    labels: List[Int],
+    source_labels: List[Int],
+    source_shape: List[Int],
+) raises -> List[Int]:
     var out = List[Int]()
-    for axis in range(len(lhs_labels)):
-        var lbl = lhs_labels[axis]
-        if not _label_in(out_labels, lbl) and not _label_in(out, lbl):
-            out.append(lbl)
-    for axis in range(len(rhs_labels)):
-        var lbl = rhs_labels[axis]
-        if not _label_in(out_labels, lbl) and not _label_in(out, lbl):
-            out.append(lbl)
+    for i in range(len(labels)):
+        var axis = _single_axis_for_label(source_labels, labels[i], String("source"))
+        if axis < 0:
+            raise Error(String("execute_max: source label ", labels[i], " missing"))
+        out.append(source_shape[axis])
     return out^
 
 
-def _coord_for_label(
+def _coord_in_group(
     lbl: Int,
-    out_labels: List[Int],
-    out_idx: List[Int],
-    reduction_labels: List[Int],
-    reduction_idx: List[Int],
+    labels: List[Int],
+    idx: List[Int],
+) -> Int:
+    var pos = _index_of(labels, lbl)
+    if pos >= 0:
+        return idx[pos]
+    return -1
+
+
+def _coord_for_grouped_label(
+    lbl: Int,
+    group0_labels: List[Int],
+    group0_idx: List[Int],
+    group1_labels: List[Int],
+    group1_idx: List[Int],
+    group2_labels: List[Int],
+    group2_idx: List[Int],
 ) raises -> Int:
-    var pos = _index_of(out_labels, lbl)
-    if pos >= 0:
-        return out_idx[pos]
-    pos = _index_of(reduction_labels, lbl)
-    if pos >= 0:
-        return reduction_idx[pos]
+    var coord = _coord_in_group(lbl, group0_labels, group0_idx)
+    if coord >= 0:
+        return coord
+    coord = _coord_in_group(lbl, group1_labels, group1_idx)
+    if coord >= 0:
+        return coord
+    coord = _coord_in_group(lbl, group2_labels, group2_idx)
+    if coord >= 0:
+        return coord
     raise Error(String("execute_max: no coordinate for label ", lbl))
 
 
-def _operand_offset(
+def _grouped_operand_offset(
     operand_labels: List[Int],
     operand_shape: List[Int],
     operand_strides: List[Int],
-    out_labels: List[Int],
-    out_idx: List[Int],
-    reduction_labels: List[Int],
-    reduction_idx: List[Int],
+    group0_labels: List[Int],
+    group0_idx: List[Int],
+    group1_labels: List[Int],
+    group1_idx: List[Int],
+    group2_labels: List[Int],
+    group2_idx: List[Int],
 ) raises -> Int:
     var off: Int = 0
     for axis in range(len(operand_labels)):
         if operand_shape[axis] == 1:
             continue
-        var coord = _coord_for_label(
+        var coord = _coord_for_grouped_label(
             operand_labels[axis],
-            out_labels,
-            out_idx,
-            reduction_labels,
-            reduction_idx,
+            group0_labels,
+            group0_idx,
+            group1_labels,
+            group1_idx,
+            group2_labels,
+            group2_idx,
         )
         off += coord * operand_strides[axis]
     return off
 
 
-def _execute_pairwise(
+def _pack_lhs_bmk(
+    src: _WorkTensor,
+    src_labels: List[Int],
+    batch_labels: List[Int],
+    batch_shape: List[Int],
+    m_labels: List[Int],
+    m_shape: List[Int],
+    k_labels: List[Int],
+    k_shape: List[Int],
+    dst: UnsafePointer[Float64, MutAnyOrigin],
+    m_size: Int,
+    k_size: Int,
+) raises -> None:
+    var batch_strides = _row_major_strides(batch_shape)
+    var m_strides = _row_major_strides(m_shape)
+    var k_strides = _row_major_strides(k_shape)
+    var batch_idx = _zeros(len(batch_shape))
+    while True:
+        var batch_flat = _offset(batch_idx, batch_strides)
+        var m_idx = _zeros(len(m_shape))
+        while True:
+            var m_flat = _offset(m_idx, m_strides)
+            var k_idx = _zeros(len(k_shape))
+            while True:
+                var k_flat = _offset(k_idx, k_strides)
+                var src_off = _grouped_operand_offset(
+                    src_labels,
+                    src.shape,
+                    src.strides,
+                    batch_labels,
+                    batch_idx,
+                    m_labels,
+                    m_idx,
+                    k_labels,
+                    k_idx,
+                )
+                dst[(batch_flat * m_size + m_flat) * k_size + k_flat] = src.data[src_off]
+                if not _advance_index(k_idx, k_shape):
+                    break
+            if not _advance_index(m_idx, m_shape):
+                break
+        if not _advance_index(batch_idx, batch_shape):
+            break
+
+
+def _pack_rhs_bkn(
+    src: _WorkTensor,
+    src_labels: List[Int],
+    batch_labels: List[Int],
+    batch_shape: List[Int],
+    k_labels: List[Int],
+    k_shape: List[Int],
+    n_labels: List[Int],
+    n_shape: List[Int],
+    dst: UnsafePointer[Float64, MutAnyOrigin],
+    k_size: Int,
+    n_size: Int,
+) raises -> None:
+    var batch_strides = _row_major_strides(batch_shape)
+    var k_strides = _row_major_strides(k_shape)
+    var n_strides = _row_major_strides(n_shape)
+    var batch_idx = _zeros(len(batch_shape))
+    while True:
+        var batch_flat = _offset(batch_idx, batch_strides)
+        var k_idx = _zeros(len(k_shape))
+        while True:
+            var k_flat = _offset(k_idx, k_strides)
+            var n_idx = _zeros(len(n_shape))
+            while True:
+                var n_flat = _offset(n_idx, n_strides)
+                var src_off = _grouped_operand_offset(
+                    src_labels,
+                    src.shape,
+                    src.strides,
+                    batch_labels,
+                    batch_idx,
+                    k_labels,
+                    k_idx,
+                    n_labels,
+                    n_idx,
+                )
+                dst[(batch_flat * k_size + k_flat) * n_size + n_flat] = src.data[src_off]
+                if not _advance_index(n_idx, n_shape):
+                    break
+            if not _advance_index(k_idx, k_shape):
+                break
+        if not _advance_index(batch_idx, batch_shape):
+            break
+
+
+def _execute_pairwise[
+    target: StaticString = "cpu"
+](
     step: PairwiseStep,
     lhs: _WorkTensor,
     rhs: _WorkTensor,
     mut allocated: List[UnsafePointer[Float64, MutAnyOrigin]],
 ) raises -> _WorkTensor:
-    var out_shape = _shape_for_labels(
-        step.out_labels,
+    var batch_labels = _labels_for_axes(step.lhs_labels, step.batch_axes_lhs)
+    var m_labels = _labels_for_axes(step.lhs_labels, step.free_axes_lhs)
+    var k_labels = _labels_for_axes(step.lhs_labels, step.contract_axes_lhs)
+    var n_labels = _labels_for_axes(step.rhs_labels, step.free_axes_rhs)
+
+    var batch_shape = _shape_for_labels(
+        batch_labels,
         step.lhs_labels,
         lhs.shape,
         step.rhs_labels,
         rhs.shape,
     )
-    var out_strides = _row_major_strides(out_shape)
-    var out_n = _numel(out_shape)
+    var m_shape = _shape_from_self(m_labels, step.lhs_labels, lhs.shape)
+    var k_shape = _shape_for_labels(
+        k_labels,
+        step.lhs_labels,
+        lhs.shape,
+        step.rhs_labels,
+        rhs.shape,
+    )
+    var n_shape = _shape_from_self(n_labels, step.rhs_labels, rhs.shape)
+
+    var batch_size = _numel(batch_shape)
+    var m_size = _numel(m_shape)
+    var k_size = _numel(k_shape)
+    var n_size = _numel(n_shape)
+
+    var natural_labels = _concat3(batch_labels, m_labels, n_labels)
+    var natural_shape = _concat3(batch_shape, m_shape, n_shape)
+    var natural_strides = _row_major_strides(natural_shape)
+
+    var out_n = batch_size * m_size * n_size
     var out_alloc_n = out_n if out_n > 0 else 1
     var out_data = alloc[Float64](out_alloc_n)
     _zero_buffer(out_data, out_alloc_n)
     allocated.append(out_data)
 
-    var reduction = _reduction_labels(
+    if out_n == 0 or k_size == 0:
+        return _transpose_to_labels(
+            _WorkTensor(out_data, natural_shape^, natural_strides^, natural_labels^),
+            step.out_labels,
+        )
+
+    var lhs_n = batch_size * m_size * k_size
+    var rhs_n = batch_size * k_size * n_size
+    var lhs_pack = alloc[Float64](lhs_n)
+    var rhs_pack = alloc[Float64](rhs_n)
+    allocated.append(lhs_pack)
+    allocated.append(rhs_pack)
+
+    _pack_lhs_bmk(
+        lhs,
         step.lhs_labels,
+        batch_labels,
+        batch_shape,
+        m_labels,
+        m_shape,
+        k_labels,
+        k_shape,
+        lhs_pack,
+        m_size,
+        k_size,
+    )
+    _pack_rhs_bkn(
+        rhs,
         step.rhs_labels,
+        batch_labels,
+        batch_shape,
+        k_labels,
+        k_shape,
+        n_labels,
+        n_shape,
+        rhs_pack,
+        k_size,
+        n_size,
+    )
+
+    var a_layout = row_major(Coord(Idx(batch_size), Idx(m_size), Idx(k_size)))
+    var b_layout = row_major(Coord(Idx(batch_size), Idx(k_size), Idx(n_size)))
+    var c_layout = row_major(Coord(Idx(batch_size), Idx(m_size), Idx(n_size)))
+    var a_tile = TileTensor(lhs_pack, a_layout)
+    var b_tile = TileTensor(rhs_pack, b_layout)
+    var c_tile = TileTensor(out_data, c_layout)
+    batched_matmul[transpose_a=False, transpose_b=False, target=target](c_tile, a_tile, b_tile)
+
+    return _transpose_to_labels(
+        _WorkTensor(out_data, natural_shape^, natural_strides^, natural_labels^),
         step.out_labels,
     )
-    var reduction_shape = _shape_for_labels(
-        reduction,
-        step.lhs_labels,
-        lhs.shape,
-        step.rhs_labels,
-        rhs.shape,
-    )
-
-    if out_n == 0:
-        return _WorkTensor(out_data, out_shape^, out_strides^, step.out_labels.copy())
-
-    var out_idx = _zeros(len(out_shape))
-    while True:
-        var acc: Float64 = 0.0
-        var reduction_idx = _zeros(len(reduction_shape))
-        while True:
-            var lhs_off = _operand_offset(
-                step.lhs_labels,
-                lhs.shape,
-                lhs.strides,
-                step.out_labels,
-                out_idx,
-                reduction,
-                reduction_idx,
-            )
-            var rhs_off = _operand_offset(
-                step.rhs_labels,
-                rhs.shape,
-                rhs.strides,
-                step.out_labels,
-                out_idx,
-                reduction,
-                reduction_idx,
-            )
-            acc += lhs.data[lhs_off] * rhs.data[rhs_off]
-            if not _advance_index(reduction_idx, reduction_shape):
-                break
-
-        out_data[_offset(out_idx, out_strides)] = acc
-        if not _advance_index(out_idx, out_shape):
-            break
-
-    return _WorkTensor(out_data, out_shape^, out_strides^, step.out_labels.copy())
 
 
 def _shape_after_reduce(shape: List[Int], reduce_axes: List[Int]) -> List[Int]:
@@ -395,7 +559,7 @@ def _permutation_for_labels(src_labels: List[Int], dst_labels: List[Int]) raises
         if p < 0:
             raise Error(
                 String(
-                    "execute_max: final output label ",
+                    "execute_max: output label ",
                     dst_labels[i],
                     " not present in result labels",
                 )
@@ -404,19 +568,19 @@ def _permutation_for_labels(src_labels: List[Int], dst_labels: List[Int]) raises
     return perm^
 
 
-def _transpose_to_final_labels(
+def _transpose_to_labels(
     tensor: _WorkTensor,
-    final_labels: List[Int],
+    labels: List[Int],
 ) raises -> _WorkTensor:
-    if _labels_equal(tensor.labels, final_labels):
+    if _labels_equal(tensor.labels, labels):
         return tensor.copy()
-    var perm = _permutation_for_labels(tensor.labels, final_labels)
+    var perm = _permutation_for_labels(tensor.labels, labels)
     var transposed = transpose_view(tensor.shape, tensor.strides, perm)
     return _WorkTensor(
         tensor.data,
         transposed.shape.copy(),
         transposed.strides.copy(),
-        final_labels.copy(),
+        labels.copy(),
     )
 
 
@@ -428,12 +592,7 @@ def _copy_pair_survivors(
 ) raises -> None:
     if lhs_idx == rhs_idx:
         raise Error(String("execute_max: pairwise step uses the same operand twice"))
-    if (
-        lhs_idx < 0
-        or lhs_idx >= len(working)
-        or rhs_idx < 0
-        or rhs_idx >= len(working)
-    ):
+    if lhs_idx < 0 or lhs_idx >= len(working) or rhs_idx < 0 or rhs_idx >= len(working):
         raise Error(String("execute_max: pairwise working-set index out of range"))
     for i in range(len(working)):
         if i != lhs_idx and i != rhs_idx:
@@ -478,12 +637,9 @@ def _copy_to_output(
             break
 
 
-# ---------------------------------------------------------------------
-# Backend entry point
-# ---------------------------------------------------------------------
-
-
-def execute_plan_flat(
+def execute_max[
+    target: StaticString = "cpu"
+](
     plan: ContractionPlan,
     operand_data: List[UnsafePointer[Float64, MutAnyOrigin]],
     operand_shapes: List[List[Int]],
@@ -492,17 +648,15 @@ def execute_plan_flat(
     out_shape: List[Int],
     out_strides: List[Int],
 ) raises:
-    """Execute `plan` against flat buffers, writing the result into `out_ptr`.
+    """Execute `plan` with TileTensor-backed MAX pairwise contraction steps.
 
-    This follows the same working-set contract as `ContractionPlan`: pairwise
-    steps remove two tensors and append one intermediate; unary steps replace
-    their input slot with a view or reduced buffer. All reductions run in a
-    deterministic left-to-right mixed-radix order.
+    Same working-set semantics as `ContractionPlan`: pairwise steps consume two
+    operands and append one result; unary steps replace their operand in place.
+    Pairwise math lowers through `linalg.bmm.batched_matmul` after packing the
+    current flat-buffer ABI into BMM-shaped TileTensor buffers. `target`
+    selects the MAX kernel target at compile time, matching `linalg.bmm`.
     """
-    if (
-        len(operand_data) != len(operand_shapes)
-        or len(operand_data) != len(operand_strides)
-    ):
+    if len(operand_data) != len(operand_shapes) or len(operand_data) != len(operand_strides):
         raise Error(String("execute_max: operand data/shape/stride length mismatch"))
     if plan.n_input_operands != len(operand_data):
         raise Error(
@@ -530,16 +684,11 @@ def execute_plan_flat(
         var step = plan.steps[step_idx].copy()
         if step.isa[PairwiseStep]():
             var ps = step.unsafe_get[PairwiseStep]().copy()
-            if (
-                ps.lhs_idx < 0
-                or ps.lhs_idx >= len(working)
-                or ps.rhs_idx < 0
-                or ps.rhs_idx >= len(working)
-            ):
+            if ps.lhs_idx < 0 or ps.lhs_idx >= len(working) or ps.rhs_idx < 0 or ps.rhs_idx >= len(working):
                 raise Error(String("execute_max: pairwise step index out of range at step ", step_idx))
             var lhs = working[ps.lhs_idx].copy()
             var rhs = working[ps.rhs_idx].copy()
-            var out = _execute_pairwise(ps, lhs, rhs, allocated)
+            var out = _execute_pairwise[target=target](ps, lhs, rhs, allocated)
             var next_working = List[_WorkTensor]()
             _copy_pair_survivors(
                 working,
@@ -565,50 +714,8 @@ def execute_plan_flat(
             )
         )
 
-    var result = _transpose_to_final_labels(working[0], plan.final_labels)
+    var result = _transpose_to_labels(working[0], plan.final_labels)
     _copy_to_output(result, out_ptr, out_shape, out_strides)
 
     for i in range(len(allocated)):
         allocated[i].free()
-
-
-def execute_max(
-    plan: ContractionPlan,
-    operand_data: List[UnsafePointer[Float64, MutAnyOrigin]],
-    operand_shapes: List[List[Int]],
-    operand_strides: List[List[Int]],
-    out_ptr: UnsafePointer[Float64, MutAnyOrigin],
-    out_shape: List[Int],
-    out_strides: List[Int],
-) raises:
-    """Execute the current Mojo-side MAX flat-buffer ABI.
-
-    The Python public `backend="max[:cpu|gpu]"` path lowers directly to MAX
-    Graph. This function is the Mojo-side semantic executor for the future
-    TileTensor cutover and for backend smoke coverage.
-    """
-    execute_plan_flat(
-        plan,
-        operand_data,
-        operand_shapes,
-        operand_strides,
-        out_ptr,
-        out_shape,
-        out_strides,
-    )
-
-
-# ---------------------------------------------------------------------
-# Future TileTensor/MAX-kernel lowering
-# ---------------------------------------------------------------------
-
-# The flat-buffer implementation above is deliberately conservative. The P5
-# TileTensor cutover should keep the same semantic helpers but replace
-# `_execute_pairwise` with:
-#
-#   1. layout composition to produce `(*B, *M, *K)` and `(*B, *K, *N)` views,
-#   2. TTGT materialization only when layout composition cannot express the
-#      source strides,
-#   3. `linalg.batched_matmul` dispatch,
-#   4. optional output permutation, avoided when swapping lhs/rhs matches the
-#      BMM-natural label order.

@@ -41,6 +41,7 @@ struct UnaryStep(Copyable, Movable):
     `out_permutation` reorders the post-reduce / post-diag tensor's axes
     to match `out_labels`.
     """
+
     var operand_idx: Int
     var kind: Int
     var in_labels: List[Int]
@@ -59,6 +60,7 @@ struct PairwiseStep(Copyable, Movable):
     (*B, *K, *N) -> (*B, *M, *N)`; `out_permutation` then reorders the
     BMM-output axes to `out_labels`.
     """
+
     var lhs_idx: Int
     var rhs_idx: Int
     var lhs_labels: List[Int]
@@ -71,6 +73,7 @@ struct PairwiseStep(Copyable, Movable):
     var free_axes_lhs: List[Int]
     var free_axes_rhs: List[Int]
     var out_permutation: List[Int]
+
 
 # Tagged union via `Variant`, the stdlib idiom.
 comptime PlanStep = Variant[UnaryStep, PairwiseStep]
@@ -85,6 +88,7 @@ struct ContractionPlan(Copyable, Movable):
     operands and appends the result. A unary step replaces its operand
     in-place. The final operand is the overall result.
     """
+
     var steps: List[PlanStep]
     var n_input_operands: Int
     var final_labels: List[Int]
@@ -438,9 +442,7 @@ def build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
             if _label_in(future_needed, lbl) and not _label_in(step_out, lbl):
                 step_out.append(lbl)
 
-        var ps = classify_pair(
-            acc_labels.copy(), rhs_labels.copy(), step_out.copy()
-        )
+        var ps = classify_pair(acc_labels.copy(), rhs_labels.copy(), step_out.copy())
         ps.lhs_idx = 0
         ps.rhs_idx = 1
         steps.append(PlanStep(ps^))
@@ -508,12 +510,7 @@ def build_plan_from_path(
                         " uses the same operand twice",
                     )
                 )
-            if (
-                lhs_idx < 0
-                or lhs_idx >= len(working)
-                or rhs_idx < 0
-                or rhs_idx >= len(working)
-            ):
+            if lhs_idx < 0 or lhs_idx >= len(working) or rhs_idx < 0 or rhs_idx >= len(working):
                 raise Error(
                     String(
                         "build_plan_from_path: pairwise step ",

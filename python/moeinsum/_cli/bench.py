@@ -1,4 +1,4 @@
-"""Benchmark CLI - `moeinsum-bench` (or `python -m moeinsum.bench`).
+"""Benchmark CLI - `moeinsum-bench` (or `python -m moeinsum._cli.bench`).
 
 Emits per-step timing as JSON. Runs each measurement N times, reports
 the median (robust to GC pauses), min, and max.
@@ -75,9 +75,8 @@ if "MOJO_PYTHON_LIBRARY" not in os.environ:
 
 import numpy as np
 
-from . import einsum, einsum_path
-from ._cache import PLAN_CACHE
-from ._max_graph import is_loadable as _max_is_loadable
+from .. import einsum, einsum_path
+from .._cache import PLAN_CACHE
 
 _tqdm: Callable[..., Iterable[int]] | None
 try:
@@ -524,12 +523,6 @@ def main(argv: list[str] | None = None) -> int:
   show_progress = sys.stderr.isatty() if args.progress is None else args.progress
   if show_progress and _tqdm is None:
     p.error("progress output requires tqdm; run with `uv run --group bench moeinsum-bench ...`")
-  if args.backend.startswith("max") and not _max_is_loadable():
-    p.error(
-      f"--backend {args.backend!r} requested but the `max` runtime did not load. "
-      "Install with `uv pip install -e '.[max]'` and ensure `python -c \"import max._core\"` "
-      "succeeds."
-    )
   if args.backend.startswith("max"):
     _apply_max_debug_api(
       max_ir_output_dir=args.max_ir_output_dir,

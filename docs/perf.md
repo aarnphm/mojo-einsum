@@ -13,7 +13,7 @@ moeinsum exposes five backend names. `reference` is still the default because it
 
 **`max` / `max:cpu` / `max:gpu`** - builds a MAX Graph for each signature and lowers repeated-label operands with `gather_nd`, pairwise contraction steps to batched matmul-shaped graph ops, and unary reductions with `sum` / `squeeze`. It supports matmul, batched matmul, outer products, multi-operand chains, size-1 broadcast, ellipsis, diagonal / trace, unary transpose, and reduce-sum. `max` chooses GPU when MAX reports an accelerator, otherwise CPU; use `max:gpu` or `max:cpu` to force placement.
 
-**`native`** - Mojo flat-buffer plan executor today, GETT-style kernels next. It covers the full grammar with deterministic reductions, then will become the home for contractions with heavy permutes, especially non-adjacent contracted dims accounting for $\ge 30\%$ of work, and for fp16/bf16/fp8 accumulator control at the WGMMA/MFMA opcode.
+**`native`** - Mojo flat-buffer plan executor today, GETT-style kernels later. It covers the full grammar with deterministic reductions, then can become the home for contractions with heavy permutes, especially non-adjacent contracted dims accounting for $\ge 30\%$ of work, and for fp16/bf16/fp8 accumulator control at the WGMMA/MFMA opcode.
 
 ## which `optimize=` algorithm
 
@@ -40,7 +40,7 @@ The explicit-path API is available now: call `einsum_path` yourself, edit or per
 
 ## accumulator dtype
 
-`dtype=` controls the public output dtype. `accum_dtype=` is validated at the API boundary, but the current execution story is backend-specific: `reference` accumulates through fp64; MAX Graph uses MAX's matmul accumulation policy (bf16 routes through MAX and accumulates in fp32 internally). The future Mojo `native` / TileTensor cutover is where `accum_dtype` becomes an opcode-level knob.
+`dtype=` controls the public output dtype. `accum_dtype=` controls the internal precision where the backend exposes a real knob. `reference` accumulates through fp64. MAX casts pairwise matmul inputs and reduction inputs to fp32 or fp64 before the graph op, rejects fp16/bf16 accumulators, and casts the public result back to `dtype=`. CPU MAX does not support bf16 graph inputs, so `backend="max:cpu"` compiles bf16 calls as fp32 graphs and returns bf16 arrays at the API boundary.
 
 | Input dtype | Default `accum_dtype` | When to override                                                          |
 | ----------- | --------------------- | ------------------------------------------------------------------------- |
@@ -96,7 +96,7 @@ The JSON includes parser IR, the chosen working-set path, cost estimates
 when the equation has no ellipsis, the Mojo plan graph spec, and per-backend
 lowering records. For `max[:cpu|gpu]`, the record shows the concrete B/K/M/N
 split, broadcast inserts, BMM shape, whether operands are swapped to avoid a
-final transpose, and the MAX Graph op target.
+final transpose, the MAX Graph op target, and the Mojo TileTensor backend seam.
 
 When compiling through MAX, `moeinsum-bench` can enable MAX debug options
 before the runtime loads:
@@ -132,7 +132,7 @@ Three diagnostics, in order:
 
 1. **BMM or permute?** If a profiler shows the matmul near platform throughput but total time still dominated elsewhere, the elsewhere is usually permute / packing / graph overhead. `native`/GETT will help.
 2. **Is K tiny?** Tensor-core BMM assumes $K \ge 16$. K=4 or K=8 hits a slow path. Fix upstream by combining multiple K-dims into one fatter K, or use the `cublas_compute_32f_fast_16f` (or platform equivalent) variant.
-3. **Allocating intermediates in the hot loop?** Each pairwise step allocates through the MAX Graph execution path today. The `ContractionContext` arena design still belongs to the Mojo TileTensor/native cutover.
+3. **Allocating intermediates in the hot loop?** Each pairwise step allocates through the MAX Graph execution path today. The Mojo MAX seam also allocates TTGT pack buffers before its `TileTensor` BMM call. A `ContractionContext` arena is still the next allocation fix.
 
 ## comparisons
 

@@ -6,6 +6,7 @@ matmul, unary transpose, diagonal extraction, and unary reduce-sum.
 
 from __future__ import annotations
 
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import reduce
@@ -14,8 +15,6 @@ from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
-
-from . import _max_graph
 
 if TYPE_CHECKING:
   from max.driver import Buffer, Device
@@ -63,11 +62,51 @@ class _PairLayout:
 class _Executable:
   model: Model
   device: Device
+  input_dtype: np.dtype
 
 
 _MODEL_CACHE_MAX = 512
 _MODEL_CACHE: OrderedDict[tuple[object, ...], _Executable] = OrderedDict()
 _MODEL_CACHE_LOCK = RLock()
+
+
+def _prefer_packaged_modular_runtime() -> None:
+  """Keep PyPI MAX from loading a monorepo KGEN runtime through ambient env."""
+  for key in ("MODULAR_PATH", "MODULAR_DERIVED_PATH"):
+    if os.environ.get(key):
+      os.environ[key] = ""
+
+
+@dataclass(frozen=True)
+class DimClassification:
+  lhs_labels: str
+  rhs_labels: str
+  out_labels: str
+  batch: tuple[str, ...]
+  contract: tuple[str, ...]
+  free_lhs: tuple[str, ...]
+  free_rhs: tuple[str, ...]
+
+
+def classify_pair(lhs_labels: str, rhs_labels: str, out_labels: str) -> DimClassification:
+  lhs_set = set(lhs_labels)
+  rhs_set = set(rhs_labels)
+  out_set = set(out_labels)
+
+  batch = tuple(dict.fromkeys(c for c in lhs_labels if c in rhs_set and c in out_set))
+  contract = tuple(dict.fromkeys(c for c in lhs_labels if c in rhs_set and c not in out_set))
+  free_lhs = tuple(dict.fromkeys(c for c in lhs_labels if c not in rhs_set and c in out_set))
+  free_rhs = tuple(dict.fromkeys(c for c in rhs_labels if c not in lhs_set and c in out_set))
+
+  return DimClassification(
+    lhs_labels=lhs_labels,
+    rhs_labels=rhs_labels,
+    out_labels=out_labels,
+    batch=batch,
+    contract=contract,
+    free_lhs=free_lhs,
+    free_rhs=free_rhs,
+  )
 
 
 def _synthetic_ellipsis_labels(n_labels: int) -> list[str]:
@@ -203,10 +242,16 @@ def _reshape(value: TensorValue, shape: list[int]) -> TensorValue:
   return ops.reshape(value, shape)
 
 
-def _reduce_out_labels(node: _Node, keep: set[str]) -> _Node:
+def _cast(value: TensorValue, dtype: DType) -> TensorValue:
   from max.graph import ops  # noqa: PLC0415
 
-  value = node.value
+  return ops.cast(value, dtype)
+
+
+def _reduce_out_labels(node: _Node, keep: set[str], accum_dtype: DType) -> _Node:
+  from max.graph import ops  # noqa: PLC0415
+
+  value = _cast(node.value, accum_dtype)
   labels = list(node.labels)
   shape = list(node.shape)
   for axis in reversed(range(len(labels))):
@@ -250,7 +295,7 @@ def _pair_layout(lhs: _LabeledShape, rhs: _LabeledShape, out_labels: str, *, swa
   rhs_sizes = _label_sizes(rhs.labels, rhs.shape)
   sizes = _merge_label_sizes(lhs_sizes, rhs_sizes)
 
-  cls = _max_graph.classify_pair(lhs.labels, rhs.labels, out_labels)
+  cls = classify_pair(lhs.labels, rhs.labels, out_labels)
   batch = "".join(cls.batch)
   contract = "".join(cls.contract)
   free_lhs = "".join(cls.free_lhs)
@@ -311,7 +356,7 @@ def _best_pair_layout(lhs: _LabeledShape, rhs: _LabeledShape, out_labels: str) -
   return normal
 
 
-def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
+def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str, accum_dtype: DType) -> _Node:
   from max.graph import ops  # noqa: PLC0415
 
   layout = _best_pair_layout(lhs, rhs, out_labels)
@@ -324,6 +369,8 @@ def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
   rhs_value = _permute_if_needed(layout_rhs.value, layout_rhs.labels, layout.rhs_order)
   lhs_value = _broadcast_if_needed(lhs_value, layout.lhs_order, layout.lhs_sizes, layout.sizes)
   rhs_value = _broadcast_if_needed(rhs_value, layout.rhs_order, layout.rhs_sizes, layout.sizes)
+  lhs_value = _cast(lhs_value, accum_dtype)
+  rhs_value = _cast(rhs_value, accum_dtype)
 
   batch_shape = _sizes_for(layout.batch, layout.sizes)
   m_shape = _sizes_for(layout.free_lhs, layout.sizes)
@@ -522,6 +569,7 @@ def _lower_graph(
   shapes: list[tuple[int, ...]],
   path: list[tuple[int, ...]],
   dtype: DType,
+  accum_dtype: DType,
   device: Device,
 ) -> Graph:
   from max.graph import DeviceRef, Graph, TensorType  # noqa: PLC0415
@@ -543,7 +591,7 @@ def _lower_graph(
         for j, node in enumerate(working):
           if j != idx:
             future.update(node.labels)
-        working[idx] = _reduce_out_labels(working[idx], future)
+        working[idx] = _reduce_out_labels(working[idx], future, accum_dtype)
         continue
 
       li, ri = step
@@ -551,7 +599,7 @@ def _lower_graph(
       rhs = working[ri]
       others = [node.labels for j, node in enumerate(working) if j not in (li, ri)]
       out_labels = _output_labels_for_pair(lhs.labels, rhs.labels, final_output, others)
-      out = _lower_pair(lhs, rhs, out_labels)
+      out = _lower_pair(lhs, rhs, out_labels, accum_dtype)
 
       for idx in sorted((li, ri), reverse=True):
         del working[idx]
@@ -560,8 +608,9 @@ def _lower_graph(
     if len(working) != 1:
       raise ValueError(f"contraction path leaves {len(working)} tensors; expected 1")
 
-    result = _reduce_out_labels(working[0], set(final_output))
+    result = _reduce_out_labels(working[0], set(final_output), accum_dtype)
     result_value = _permute_if_needed(result.value, result.labels, final_output)
+    result_value = _cast(result_value, dtype)
     graph.output(result_value)
     return graph
 
@@ -580,20 +629,32 @@ def _select_device(backend: str) -> Device:
   return CPU()
 
 
+def _graph_input_dtype(public_dtype: np.dtype, device: Device) -> np.dtype:
+  from max.driver import CPU  # noqa: PLC0415
+
+  if public_dtype.name == "bfloat16" and isinstance(device, CPU):
+    return np.dtype("float32")
+  return public_dtype
+
+
 def _compile(
   eq: str,
   shapes: list[tuple[int, ...]],
   path: list[tuple[int, ...]],
-  dtype: DType,
+  public_dtype: np.dtype,
+  accum_dtype: DType,
   backend: str,
 ) -> _Executable:
+  _prefer_packaged_modular_runtime()
+
   from max.engine import InferenceSession  # noqa: PLC0415
 
   device = _select_device(backend)
-  graph = _lower_graph(eq, shapes, path, dtype, device)
+  input_dtype = _graph_input_dtype(public_dtype, device)
+  graph = _lower_graph(eq, shapes, path, _max_dtype_for(input_dtype), accum_dtype, device)
   session = InferenceSession(devices=[device])
   try:
-    return _Executable(model=session.load(graph), device=device)
+    return _Executable(model=session.load(graph), device=device, input_dtype=input_dtype)
   except RuntimeError:
     if backend != "max":
       raise
@@ -602,9 +663,10 @@ def _compile(
     if accelerator_count() == 0:
       raise
     cpu = CPU()
-    graph = _lower_graph(eq, shapes, path, dtype, cpu)
+    input_dtype = _graph_input_dtype(public_dtype, cpu)
+    graph = _lower_graph(eq, shapes, path, _max_dtype_for(input_dtype), accum_dtype, cpu)
     session = InferenceSession(devices=[cpu])
-    return _Executable(model=session.load(graph), device=cpu)
+    return _Executable(model=session.load(graph), device=cpu, input_dtype=input_dtype)
 
 
 def _max_dtype_for(dtype: np.dtype) -> DType:
@@ -620,6 +682,23 @@ def _max_dtype_for(dtype: np.dtype) -> DType:
     f"backend='max' supports float32/float64/bfloat16, got {dtype}. "
     f"fp16 is GPU-only in MAX today; route through backend='max:gpu' once "
     f"that path lands."
+  )
+
+
+def _default_accum_dtype(dtype: np.dtype) -> np.dtype:
+  if dtype == np.dtype("float16") or dtype.name == "bfloat16":
+    return np.dtype("float32")
+  return dtype
+
+
+def _max_accum_dtype_for(dtype: np.dtype, accum_dtype: np.dtype | None) -> DType:
+  resolved = _default_accum_dtype(dtype) if accum_dtype is None else accum_dtype
+  if resolved == np.dtype("float32") or resolved == np.dtype("float64"):
+    return _max_dtype_for(resolved)
+  raise NotImplementedError(
+    f"backend='max' supports accum_dtype float32/float64, got {resolved}. "
+    f"Low-precision accumulation is intentionally rejected because MAX Graph "
+    f"does not expose a bf16/fp16 accumulator-control knob here."
   )
 
 
@@ -653,27 +732,32 @@ def execute_max(
   arrays: list[np.ndarray],
   path: list[tuple[int, ...]],
   backend: str,
+  accum_dtype: np.dtype | None = None,
 ) -> np.ndarray:
+  _prefer_packaged_modular_runtime()
+
   from max.driver import Buffer  # noqa: PLC0415
 
   if not arrays:
     raise ValueError("einsum requires at least one operand")
   dtype = np.result_type(*arrays)
-  max_dtype = _max_dtype_for(dtype)
+  _max_dtype_for(dtype)
+  max_accum_dtype = _max_accum_dtype_for(dtype, accum_dtype)
+  accum_key = str(_default_accum_dtype(dtype) if accum_dtype is None else accum_dtype)
 
-  max_arrays = [np.ascontiguousarray(array.astype(dtype, copy=False)) for array in arrays]
-  shapes = [tuple(array.shape) for array in max_arrays]
-  key = (eq, tuple(shapes), str(dtype), tuple(path), backend)
+  shapes = [tuple(array.shape) for array in arrays]
+  key = (eq, tuple(shapes), str(dtype), accum_key, tuple(path), backend)
   with _MODEL_CACHE_LOCK:
     executable = _MODEL_CACHE.get(key)
     if executable is None:
-      executable = _compile(eq, shapes, path, max_dtype, backend)
+      executable = _compile(eq, shapes, path, dtype, max_accum_dtype, backend)
       _MODEL_CACHE[key] = executable
       while len(_MODEL_CACHE) > _MODEL_CACHE_MAX:
         _MODEL_CACHE.popitem(last=False)
     else:
       _MODEL_CACHE.move_to_end(key)
 
+  max_arrays = [np.ascontiguousarray(array.astype(executable.input_dtype, copy=False)) for array in arrays]
   inputs = [_input_buffer(array, executable.device) for array in max_arrays]
   result = executable.model.execute(*inputs)[0]
   if not isinstance(result, Buffer):
@@ -682,3 +766,23 @@ def execute_max(
   if out.dtype != dtype:
     out = out.astype(dtype)
   return out
+
+
+class MaxGraphBackend:
+  def graph_spec_for(
+    self,
+    eq: str,
+    shapes: list[tuple[int, ...]],
+    path: list[tuple[int, ...]],
+  ) -> dict[str, object]:
+    return lowering_spec(eq, shapes, path)
+
+  def execute(
+    self,
+    eq: str,
+    shapes: list[tuple[int, ...]],
+    path: list[tuple[int, ...]],
+    operands: list[object],
+  ) -> object:
+    _ = shapes
+    return execute_max(eq, [np.asarray(op) for op in operands], path, "max:cpu")

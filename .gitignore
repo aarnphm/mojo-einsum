@@ -12,3 +12,4 @@ __pycache__/
 *.dll
 __mojocache__/
 .mohaus/
+/cache/

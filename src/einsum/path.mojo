@@ -192,12 +192,8 @@ def greedy_path(
                 for k in range(len(working)):
                     if k != i and k != j:
                         others.append(working[k].copy())
-                var out = _step_output_labels(
-                    working[i], working[j], others, eq.output
-                )
-                var score = _reduced_size_cost(
-                    working[i], working[j], out, label_sizes
-                )
+                var out = _step_output_labels(working[i], working[j], others, eq.output)
+                var score = _reduced_size_cost(working[i], working[j], out, label_sizes)
                 var flops = _flop_cost(working[i], working[j], out, label_sizes)
                 var better = False
                 if score > best_score:
@@ -276,9 +272,7 @@ def optimal_path(
     """
     var n = eq.n_operands()
     if n > 16:
-        raise Error(
-            String("optimal_path: ", n, " operands exceeds DP limit of 16")
-        )
+        raise Error(String("optimal_path: ", n, " operands exceeds DP limit of 16"))
     if n < 2:
         return List[ContractionStep]()
 
@@ -470,12 +464,8 @@ def _branch_recurse(
             for k in range(n_w):
                 if k != i and k != j:
                     others.append(working[k].copy())
-            var out = _step_output_labels(
-                working[i], working[j], others, final_output
-            )
-            var rs = _reduced_size_cost(
-                working[i], working[j], out, label_sizes
-            )
+            var out = _step_output_labels(working[i], working[j], others, final_output)
+            var rs = _reduced_size_cost(working[i], working[j], out, label_sizes)
             var fl = _flop_cost(working[i], working[j], out, label_sizes)
             lhs_list.append(i)
             rhs_list.append(j)
@@ -584,9 +574,7 @@ def _path_total_flops(
         for j in range(len(working)):
             if j != li and j != ri:
                 others.append(working[j].copy())
-        var out = _step_output_labels(
-            working[li], working[ri], others, eq.output
-        )
+        var out = _step_output_labels(working[li], working[ri], others, eq.output)
         total += _flop_cost(working[li], working[ri], out, label_sizes)
         var new_working = List[List[Int]]()
         for j in range(len(working)):
@@ -646,34 +634,20 @@ def random_greedy_path(
                     for k in range(len(working)):
                         if k != i and k != j:
                             others.append(working[k].copy())
-                    var out = _step_output_labels(
-                        working[i], working[j], others, eq.output
-                    )
-                    var score = _reduced_size_cost(
-                        working[i], working[j], out, label_sizes
-                    )
-                    var flops = _flop_cost(
-                        working[i], working[j], out, label_sizes
-                    )
-                    var jitter = (
-                        trial_seed + step_idx + i * 131 + j * 17
-                    ) & 0xFFFF
+                    var out = _step_output_labels(working[i], working[j], others, eq.output)
+                    var score = _reduced_size_cost(working[i], working[j], out, label_sizes)
+                    var flops = _flop_cost(working[i], working[j], out, label_sizes)
+                    var jitter = (trial_seed + step_idx + i * 131 + j * 17) & 0xFFFF
                     var centered_jitter = jitter - 32768
                     var abs_score = score if score >= 0 else -score
                     var noise_scale = abs_score // 2 + 1
-                    var noisy_score = (
-                        score + (centered_jitter * noise_scale) // 32768
-                    )
+                    var noisy_score = score + (centered_jitter * noise_scale) // 32768
                     var better = False
                     if noisy_score > best_noisy_score:
                         better = True
                     elif noisy_score == best_noisy_score and score > best_score:
                         better = True
-                    elif (
-                        noisy_score == best_noisy_score
-                        and score == best_score
-                        and flops < best_flops
-                    ):
+                    elif noisy_score == best_noisy_score and score == best_score and flops < best_flops:
                         better = True
                     elif (
                         noisy_score == best_noisy_score
@@ -718,9 +692,7 @@ def _parse_trial_suffix(algorithm: String, after: Int) raises -> Int:
     var bytes = algorithm.as_bytes()
     var n = len(bytes)
     if after >= n:
-        raise Error(
-            String("random-greedy: missing trial count in '", algorithm, "'")
-        )
+        raise Error(String("random-greedy: missing trial count in '", algorithm, "'"))
     var value: Int = 0
     for i in range(after, n):
         var c = Int(bytes[i])
