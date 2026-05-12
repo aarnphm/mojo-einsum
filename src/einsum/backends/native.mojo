@@ -1,15 +1,16 @@
-"""Native-optimized backend skeleton.
+"""Native backend over the current flat-buffer ABI.
 
-Same execution seam as `MaxBackend`, different lowering: instead of calling
-`linalg.batched_matmul` from MAX, this backend ships native kernels:
+Same execution seam as `MaxBackend`, different lowering target. The current
+implementation executes the plan through the Mojo flat-buffer engine, so the
+public `backend="native"` path is real and correctness-equivalent to the plan
+IR. The next kernel cutover replaces the pairwise inner loop with native kernels:
 
   - Phase 11: SIMD-tiled CPU GETT, TBLIS-style fuse-permute-into-pack.
   - Phase 12: SM90 WGMMA GETT, with permutation fused into shared-memory tile
     loads, matching the cuTENSOR GETT family.
 
-The skeleton lives here so backend selection is concrete from day one and
-downstream code can thread the `"native"` choice through cache keys, CLIs, and
-bench matrices without conditional plumbing.
+The flat executor is intentionally conservative: it is the semantic baseline
+that the SIMD/GPU kernels must preserve.
 
 Kernel surface targets, implemented when the corresponding kernel lands:
 
@@ -20,12 +21,12 @@ Kernel surface targets, implemented when the corresponding kernel lands:
     `TensorCoreAsync[mma_shape=Index(64, 128, 16)]` on SM90 with
     `warpgroup_fence()` bracketing.
 
-The Phase 11/12 design lives in `docs/derivations.md` Section 3. This file stays
-a stub until the kernel work starts.
+The Phase 11/12 design lives in `docs/derivations.md` Section 3.
 """
 
 from std.memory import UnsafePointer
 
+from einsum.backends.max import execute_plan_flat
 from einsum.plan import ContractionPlan
 
 
@@ -43,24 +44,15 @@ def execute_native(
     Same working-set semantics as `build_naive_plan`: each pairwise step consumes
     two operands and appends the result; each unary step replaces its operand in
     place.
-
-    v0.1 status: structural skeleton only. The CPU GETT lands in P11, the SM90
-    GETT in P12. Both raise `Phase 11/12 work` until then.
     """
-    _ = plan
-    _ = operand_data
-    _ = operand_shapes
-    _ = operand_strides
-    _ = out_ptr
-    _ = out_shape
-    _ = out_strides
-    raise Error(
-        String(
-            "execute_native: not yet implemented (Phase 11/12 work). ",
-            "P11 = SIMD-tiled CPU GETT (TBLIS), P12 = SM90 WGMMA. ",
-            "Use backend='reference' for correctness, or backend='max' ",
-            "once P5 lands.",
-        )
+    execute_plan_flat(
+        plan,
+        operand_data,
+        operand_shapes,
+        operand_strides,
+        out_ptr,
+        out_shape,
+        out_strides,
     )
 
 

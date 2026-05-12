@@ -215,8 +215,8 @@ def expand_ellipsis(
     """In-place substitute `ELLIPSIS_LABEL` with fresh labels.
 
     Ellipsis width per operand is `operand_ranks[i] - explicit_label_count`.
-    v0.1 requires all ellipses to expand to the same width, so mismatched
-    ellipsis-rank broadcasting is rejected explicitly.
+    Shorter explicit ellipses are right-aligned against the full broadcast
+    ellipsis, matching NumPy's `...ij,...jk->...ik` behavior.
     """
     if len(operand_ranks) != eq.n_operands():
         raise Error(
@@ -285,18 +285,6 @@ def expand_ellipsis(
     var new_inputs = List[List[Int]]()
     for i in range(eq.n_operands()):
         var w = widths[i]
-        if w != max_width and w != 0:
-            raise Error(
-                String(
-                    "expand_ellipsis: operand ",
-                    i,
-                    " ellipsis width ",
-                    w,
-                    " != max ",
-                    max_width,
-                    " - broadcast across mismatched ellipsis-rank not yet supported",
-                )
-            )
         var out = List[Int]()
         ref op = eq.inputs[i]
         for lbl_idx in range(len(op)):

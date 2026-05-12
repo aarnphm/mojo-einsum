@@ -83,6 +83,7 @@ def test_max_backend_model_cache_reuses_compiled_graph() -> None:
   """
   from moeinsum import _max_backend  # noqa: PLC0415
 
+  _max_backend._MODEL_CACHE.clear()
   a = np.arange(12, dtype=np.float32).reshape(3, 4)
   b = np.arange(20, dtype=np.float32).reshape(4, 5)
 
@@ -106,6 +107,7 @@ def test_max_backend_model_cache_keys_on_dtype() -> None:
   execute time — both worse than a clean miss."""
   from moeinsum import _max_backend  # noqa: PLC0415
 
+  _max_backend._MODEL_CACHE.clear()
   a32 = np.arange(12, dtype=np.float32).reshape(3, 4)
   b32 = np.arange(20, dtype=np.float32).reshape(4, 5)
   a64 = a32.astype(np.float64)
@@ -127,6 +129,7 @@ def test_max_backend_model_cache_keys_on_shape() -> None:
   """
   from moeinsum import _max_backend  # noqa: PLC0415
 
+  _max_backend._MODEL_CACHE.clear()
   rng = np.random.default_rng(0)
   a1 = rng.standard_normal((3, 4)).astype(np.float32)
   b1 = rng.standard_normal((4, 5)).astype(np.float32)

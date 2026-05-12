@@ -24,18 +24,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 - **P8** DLPack interop: `_interop.to_numpy` preserves dtype; `_interop.from_numpy(arr, kind)` round-trips to torch / jax / mlx / cupy / tensorflow. fp64 cast lives at the FFI boundary, not the API. `jaxlib` → `jax` alias in `source_kind` keeps jax round-trips from collapsing to numpy.
 - **P9** Precision parameters wired (`accum_dtype`, `dtype`, `deterministic`); bf16 inputs route through MAX with an fp32 accumulator. K > 64 drift held under 1% with $\sqrt{K}$ growth (rejects linear-K bf16-accumulator regressions). Reference backend always accumulates in fp64.
 - **P10** GPU dispatch validation, Python-side: `backend="max:gpu"` flows through `max.graph` and is exercised in `tests/python/test_max_backend.py`. B200 smoke passes on the supported BMM / ellipsis subset; Mojo-side `target="gpu"` waits on P5.
+- **P11/P12** Native backend: `backend="native"` executes the Mojo flat-buffer `ContractionPlan` engine across pairwise and unary steps. SIMD CPU GETT and SM90 WGMMA kernel cutovers remain pending.
 - **P13** Bench CLI: JSON output, per-platform metadata, median/min/max timing, optional path introspection, optimizer-sweep with ratios.
 - **P13** `--cache-bench` cold/hot ratio (§3 audit); `--compare` / `--compare-engines` against numpy / opt_einsum / mlx; `--dtype bfloat16` via `ml_dtypes` with numpy-skip handshake.
 - **P13** `is_loadable()` argparse gate on `--backend max:*` so MAX ABI mismatches surface as a clean error rather than a 30-line dlopen stacktrace.
-- **P14** `MaxGraphBackend`: Python-side plan-to-graph translation — `classify_pair(lhs, rhs, out)`, `plan_to_graph_spec(eq, shapes, path)`, `DimClassification`, `GraphSpec`. `MaxGraphBackend.execute(...)` bridges through `_max_backend.execute_max`; the spec is end-to-end executable on the BMM-lowerable subset.
+- **P14** `MaxGraphBackend`: Python-side plan-to-graph translation — `classify_pair(lhs, rhs, out)`, `plan_to_graph_spec(eq, shapes, path)`, `DimClassification`, `GraphSpec`. `MaxGraphBackend.execute(...)` bridges through `_max_backend.execute_max`; repeated labels lower through `gather_nd`, and pairwise steps lower through MAX Graph matmul.
 - **P14** Executable MAX ellipsis expansion: `backend="max[:cpu|gpu]"` rewrites `...` to synthetic internal labels before graph lowering, including right-aligned broadcast ellipses and implicit-output ellipsis-first ordering.
 - **P15** Docs (6 files): `notation.md` (size-1 broadcast pinned), `derivations.md` (BMM lowering, path-cost models, GETT, $\sqrt{K}$ accumulation rule), `perf.md`, `comparisons.md` (vs opt_einsum / JAX / PyTorch / cuTENSOR / TBLIS), `plan-verification.md` (8 claim rows backed), `ffi.md` (P5 design-spike).
 
 ### Skeleton (kernel/codegen pending)
 
-- **P5** Mojo `MaxBackend`: skeleton + four-step lowering pseudocode in `src/einsum/backends/max.mojo`. Full cutover needs `mojo-include-paths` re-enable + TileTensor / RuntimeLayout plumbing — see `docs/ffi.md`. The Python-side MAX path (`_max_backend.py`, reached via `backend="max[:cpu|gpu]"`) ships and covers the same lowering surface today.
-- **P11** Native CPU GETT: `src/einsum/backends/native.mojo` skeleton raises a phase-aware error; TBLIS-style pack-with-permute design in `docs/derivations.md` §3.
-- **P12** Native GPU SM90 GETT: same module; WGMMA + TMA + permute-fused-pack design notes.
+- **P5** Mojo `MaxBackend`: flat-buffer executor in `src/einsum/backends/max.mojo` now runs plan working-set semantics directly: pairwise reductions, unary transpose / diagonal / reduce, broadcast-aware label sizes, and deterministic mixed-radix reductions. Full kernel cutover still needs `mojo-include-paths` re-enable + TileTensor / RuntimeLayout plumbing — see `docs/ffi.md`. The Python-side MAX path (`_max_backend.py`, reached via `backend="max[:cpu|gpu]"`) remains the public executable MAX Graph bridge today.
+- **P11** Native CPU GETT: flat-buffer executor shipped; TBLIS-style pack-with-permute kernel work remains. Design in `docs/derivations.md` §3.
+- **P12** Native GPU SM90 GETT: flat-buffer executor shipped; WGMMA + TMA + permute-fused-pack kernel work remains.
 
 ### Hardware-backed follow-up
 
@@ -58,7 +59,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 - **Equation IR uses int-interned labels** rather than chars — supports more than 52 distinct labels.
 - **Runtime parsing only**, with the JIT plan cache providing the specialization story. Compile-time `StringLiteral` parser deferred until Mojo exposes parameter-time byte indexing.
-- **MAX is a backend, not the lowering target.** The library defines its own `ContractionPlan` IR; backends (`reference`, `max`, `native`, `max_graph`) consume the plan.
+- **MAX is a backend, not the lowering target.** The library defines its own `ContractionPlan` IR; backends (`reference`, `max`, `native`) consume the plan.
 - **`linalg.batched_matmul` is the fast-path target** inside `MaxBackend`. Rank-2 `linalg.matmul` `comptime asserts` rank-2, which rules it out as the unified path.
 - **`TileTensor` is the canonical operand type** across MAX-using backends from P5 onward.
 - **DLPack-first interop** with `__array_interface__` / `np.asarray` fallback. One adapter covers numpy / jax / torch / mlx / cupy / tensorflow.

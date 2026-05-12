@@ -7,15 +7,13 @@ _See [[derivations]] for the math behind these rules._
 
 ## backends
 
-moeinsum exposes four backend names. `reference` is still the default because it covers the full grammar. `max` is the fast executable path for the BMM-lowerable subset.
+moeinsum exposes five backend names. `reference` is still the default because it covers the full grammar with fp64 internal accumulation. `native` is the Mojo plan executor for the full grammar. `max` is the fast executable MAX Graph path for float32, float64, and bfloat16 tensors.
 
 **`reference`** - naive nested loop, fp64 internally. Use it as the oracle when a result diverges. It is also the right choice for tensor totals under $10^4$ elements, where BMM launch overhead can dominate. It scales as O(product-of-all-label-sizes), so large contractions need another backend.
 
-**`max` / `max:cpu` / `max:gpu`** - builds a MAX Graph for each signature and lowers pairwise contraction steps to batched matmul-shaped graph ops. It supports matmul, batched matmul, outer products, multi-operand chains, size-1 broadcast, ellipsis, unary transpose, and reduce-sum. It still rejects repeated labels inside one operand, so trace / diagonal cases stay on `reference`. `max` chooses GPU when MAX reports an accelerator, otherwise CPU; use `max:gpu` or `max:cpu` to force placement.
+**`max` / `max:cpu` / `max:gpu`** - builds a MAX Graph for each signature and lowers repeated-label operands with `gather_nd`, pairwise contraction steps to batched matmul-shaped graph ops, and unary reductions with `sum` / `squeeze`. It supports matmul, batched matmul, outer products, multi-operand chains, size-1 broadcast, ellipsis, diagonal / trace, unary transpose, and reduce-sum. `max` chooses GPU when MAX reports an accelerator, otherwise CPU; use `max:gpu` or `max:cpu` to force placement.
 
-**`native`** - GETT-style kernels, skeleton only. Target this for contractions with heavy permutes, especially non-adjacent contracted dims accounting for $\ge 30\%$ of work, and for fp16/bf16/fp8 accumulator control at the WGMMA/MFMA opcode.
-
-**`max_graph`** - compatibility alias for the executable MAX Graph bridge plus an inspection API (`plan_to_graph_spec`). Whole-graph fusion across surrounding elementwise ops is still future work.
+**`native`** - Mojo flat-buffer plan executor today, GETT-style kernels next. It covers the full grammar with deterministic reductions, then will become the home for contractions with heavy permutes, especially non-adjacent contracted dims accounting for $\ge 30\%$ of work, and for fp16/bf16/fp8 accumulator control at the WGMMA/MFMA opcode.
 
 ## which `optimize=` algorithm
 
@@ -44,12 +42,12 @@ The explicit-path API is available now: call `einsum_path` yourself, edit or per
 
 `dtype=` controls the public output dtype. `accum_dtype=` is validated at the API boundary, but the current execution story is backend-specific: `reference` accumulates through fp64; MAX Graph uses MAX's matmul accumulation policy (bf16 routes through MAX and accumulates in fp32 internally). The future Mojo `native` / TileTensor cutover is where `accum_dtype` becomes an opcode-level knob.
 
-| Input dtype | Default `accum_dtype` | When to override                                                                                                 |
-| ----------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| fp32        | fp32                  | Rarely. fp64 if you have a known stability problem.                                                              |
-| fp16 / bf16 | fp32                  | Avoid fp16/bf16 accumulation above K=64 (see `derivations.md` Section 4).                                      |
-| fp64        | fp64                  | n/a                                                                                                              |
-| int\*       | int64                 | If you can guarantee no overflow, int32 saves bandwidth.                                                         |
+| Input dtype | Default `accum_dtype` | When to override                                                          |
+| ----------- | --------------------- | ------------------------------------------------------------------------- |
+| fp32        | fp32                  | Rarely. fp64 if you have a known stability problem.                       |
+| fp16 / bf16 | fp32                  | Avoid fp16/bf16 accumulation above K=64 (see `derivations.md` Section 4). |
+| fp64        | fp64                  | n/a                                                                       |
+| int\*       | int64                 | If you can guarantee no overflow, int32 saves bandwidth.                  |
 
 [[derivations#4. Low-precision accumulation|Derivation 4]] shows the $\sqrt{K}$ growth. At K=4096, bf16 accumulation has ~50% relative error against fp32's ~$10^{-5}$, roughly a $50{,}000\times$ error ratio for a $2\times$ input-bandwidth saving.
 

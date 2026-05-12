@@ -10,10 +10,27 @@ without touching Python or MAX. The first build target to make work.
 from einsum.parse import parse, expand_ellipsis, ELLIPSIS_LABEL, EinsumEquation
 from einsum.plan import build_naive_plan, ContractionPlan
 from einsum.path import compute_path, ContractionStep
-from einsum.backends.reference import _resolve_label_sizes
-# Import-only check - confirms the skeleton compiles. Calling
-# `execute_native(...)` would raise; we just need the symbol to resolve.
+from einsum.backends.reference import _resolve_label_sizes, compute_output_shape
+# Import-only checks - confirms backend symbols compile.
+from einsum.backends.max import execute_max
 from einsum.backends.native import execute_native
+from std.memory import UnsafePointer
+from std.memory.unsafe_pointer import alloc
+
+
+def _row_major_strides(shape: List[Int]) -> List[Int]:
+    var rank = len(shape)
+    var strides = List[Int]()
+    for _ in range(rank):
+        strides.append(0)
+    if rank == 0:
+        return strides^
+    strides[rank - 1] = 1
+    var axis = rank - 2
+    while axis >= 0:
+        strides[axis] = strides[axis + 1] * shape[axis + 1]
+        axis -= 1
+    return strides^
 
 
 def check_basic() raises:
@@ -231,6 +248,197 @@ def check_path_invalid_random_greedy() raises:
     print("check_path_invalid_random_greedy: OK")
 
 
+def check_max_backend_matmul() raises:
+    var eq = parse(String("ij,jk->ik"))
+    var plan = build_naive_plan(eq)
+
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(2)
+    s0.append(3)
+    shapes.append(s0^)
+    var s1 = List[Int]()
+    s1.append(3)
+    s1.append(2)
+    shapes.append(s1^)
+
+    var a = alloc[Float64](6)
+    var b = alloc[Float64](6)
+    var out = alloc[Float64](4)
+    for i in range(6):
+        a[i] = Float64(i + 1)
+        b[i] = Float64(i + 7)
+    for i in range(4):
+        out[i] = 0.0
+
+    var data = List[UnsafePointer[Float64, MutAnyOrigin]]()
+    data.append(a)
+    data.append(b)
+
+    var strides = List[List[Int]]()
+    strides.append(_row_major_strides(shapes[0]))
+    strides.append(_row_major_strides(shapes[1]))
+
+    var out_shape = compute_output_shape(eq, shapes)
+    var out_strides = _row_major_strides(out_shape)
+    execute_max(plan, data, shapes, strides, out, out_shape, out_strides)
+
+    if out[0] != 58.0 or out[1] != 64.0 or out[2] != 139.0 or out[3] != 154.0:
+        raise Error(
+            String(
+                "max backend matmul mismatch: [",
+                out[0],
+                ", ",
+                out[1],
+                ", ",
+                out[2],
+                ", ",
+                out[3],
+                "]",
+            )
+        )
+
+    for i in range(4):
+        out[i] = 0.0
+    execute_native(plan, data, shapes, strides, out, out_shape, out_strides)
+    if out[0] != 58.0 or out[1] != 64.0 or out[2] != 139.0 or out[3] != 154.0:
+        raise Error(String("native backend matmul mismatch"))
+
+    a.free()
+    b.free()
+    out.free()
+    print("check_max_backend_matmul: OK")
+    print("check_native_backend_matmul: OK")
+
+
+def check_max_backend_unary_transpose() raises:
+    var eq = parse(String("ij->ji"))
+    var plan = build_naive_plan(eq)
+
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(2)
+    s0.append(3)
+    shapes.append(s0^)
+
+    var a = alloc[Float64](6)
+    var out = alloc[Float64](6)
+    for i in range(6):
+        a[i] = Float64(i + 1)
+        out[i] = 0.0
+
+    var data = List[UnsafePointer[Float64, MutAnyOrigin]]()
+    data.append(a)
+    var strides = List[List[Int]]()
+    strides.append(_row_major_strides(shapes[0]))
+
+    var out_shape = compute_output_shape(eq, shapes)
+    var out_strides = _row_major_strides(out_shape)
+    execute_max(plan, data, shapes, strides, out, out_shape, out_strides)
+
+    if (
+        out[0] != 1.0
+        or out[1] != 4.0
+        or out[2] != 2.0
+        or out[3] != 5.0
+        or out[4] != 3.0
+        or out[5] != 6.0
+    ):
+        raise Error(String("max backend unary transpose mismatch"))
+
+    for i in range(6):
+        out[i] = 0.0
+    execute_native(plan, data, shapes, strides, out, out_shape, out_strides)
+    if (
+        out[0] != 1.0
+        or out[1] != 4.0
+        or out[2] != 2.0
+        or out[3] != 5.0
+        or out[4] != 3.0
+        or out[5] != 6.0
+    ):
+        raise Error(String("native backend unary transpose mismatch"))
+
+    a.free()
+    out.free()
+    print("check_max_backend_unary_transpose: OK")
+    print("check_native_backend_unary_transpose: OK")
+
+
+def check_max_backend_final_transpose() raises:
+    var eq = parse(String("ji,jk->ki"))
+    var plan = build_naive_plan(eq)
+
+    var shapes = List[List[Int]]()
+    var s0 = List[Int]()
+    s0.append(3)
+    s0.append(2)
+    shapes.append(s0^)
+    var s1 = List[Int]()
+    s1.append(3)
+    s1.append(5)
+    shapes.append(s1^)
+
+    var a = alloc[Float64](6)
+    var b = alloc[Float64](15)
+    var out = alloc[Float64](10)
+    for i in range(6):
+        a[i] = Float64(i + 1)
+    for i in range(15):
+        b[i] = Float64(i + 7)
+    for i in range(10):
+        out[i] = 0.0
+
+    var data = List[UnsafePointer[Float64, MutAnyOrigin]]()
+    data.append(a)
+    data.append(b)
+
+    var strides = List[List[Int]]()
+    strides.append(_row_major_strides(shapes[0]))
+    strides.append(_row_major_strides(shapes[1]))
+
+    var out_shape = compute_output_shape(eq, shapes)
+    var out_strides = _row_major_strides(out_shape)
+    execute_max(plan, data, shapes, strides, out, out_shape, out_strides)
+
+    if (
+        out[0] != 128.0
+        or out[1] != 164.0
+        or out[2] != 137.0
+        or out[3] != 176.0
+        or out[4] != 146.0
+        or out[5] != 188.0
+        or out[6] != 155.0
+        or out[7] != 200.0
+        or out[8] != 164.0
+        or out[9] != 212.0
+    ):
+        raise Error(String("max backend final transpose mismatch"))
+
+    for i in range(10):
+        out[i] = 0.0
+    execute_native(plan, data, shapes, strides, out, out_shape, out_strides)
+    if (
+        out[0] != 128.0
+        or out[1] != 164.0
+        or out[2] != 137.0
+        or out[3] != 176.0
+        or out[4] != 146.0
+        or out[5] != 188.0
+        or out[6] != 155.0
+        or out[7] != 200.0
+        or out[8] != 164.0
+        or out[9] != 212.0
+    ):
+        raise Error(String("native backend final transpose mismatch"))
+
+    a.free()
+    b.free()
+    out.free()
+    print("check_max_backend_final_transpose: OK")
+    print("check_native_backend_final_transpose: OK")
+
+
 def main() raises:
     check_basic()
     check_trace()
@@ -241,8 +449,9 @@ def main() raises:
     check_path_branch()
     check_path_random_greedy_n()
     check_path_invalid_random_greedy()
-    # `execute_native` is import-only - calling it would raise the
-    # Phase 11/12 NotImplementedError, which we want to defer until the
-    # kernel work actually starts.
+    check_max_backend_matmul()
+    check_max_backend_unary_transpose()
+    check_max_backend_final_transpose()
+    _ = execute_max
     _ = execute_native
     print("all parser smoke tests passed")

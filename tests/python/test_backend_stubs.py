@@ -11,13 +11,13 @@ being installed. Tests cover:
     the canonical einsum shapes (BMM, matmul, trace, reduce, identity)
   - the dim classifier matches JAX's B/K/M/N split on hand-known cases
 
-`backend="max"` and its `max_graph` alias are executable for the
-BMM-lowerable subset through MAX Graph.
+`backend="max"` is executable through MAX Graph for the shipped grammar.
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.util
 
 import pytest
 from moeinsum._max_graph import (
@@ -240,23 +240,60 @@ def test_spec_unary_identity_emits_no_ops() -> None:
 
 
 # ---------------------------------------------------------------------
-# Planned-but-unimplemented backend dispatch
+# Native backend dispatch
 # ---------------------------------------------------------------------
 
 
-def test_einsum_native_backend_phase_aware_error() -> None:
-  """`backend="native"` is planned (P11/P12) but not wired. Callers
-  should get a NotImplementedError naming the phase and the skeleton
-  file, not an opaque "unknown backend" string."""
+@pytest.mark.parametrize(
+  ("eq", "shapes"),
+  [
+    ("ij,jk->ik", [(3, 4), (4, 5)]),
+    ("ij->ji", [(3, 4)]),
+    ("ij->", [(3, 4)]),
+    ("ii->", [(4, 4)]),
+    ("iij,jk->ik", [(3, 3, 4), (4, 5)]),
+    ("ij,jk,kl->il", [(3, 4), (4, 5), (5, 6)]),
+    ("cij,cjk->cik", [(1, 3, 4), (5, 4, 6)]),
+  ],
+)
+def test_einsum_native_backend_matches_numpy(eq: str, shapes: list[tuple[int, ...]]) -> None:
+  """`backend="native"` runs through the Mojo plan executor."""
   import moeinsum
   import numpy as np
 
-  with pytest.raises(NotImplementedError, match="P11"):
-    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="native")
+  rng = np.random.default_rng(0)
+  arrays = [rng.standard_normal(shape).astype(np.float64) for shape in shapes]
+
+  expected = np.einsum(eq, *arrays, optimize=True)
+  actual = moeinsum.einsum(eq, *arrays, backend="native")
+
+  np.testing.assert_allclose(np.asarray(actual), expected, atol=1e-10, rtol=1e-10)
+
+
+def test_einsum_native_backend_respects_explicit_path() -> None:
+  import moeinsum
+  import numpy as np
+
+  rng = np.random.default_rng(1)
+  arrays = [
+    rng.standard_normal((2, 3)),
+    rng.standard_normal((3, 4)),
+    rng.standard_normal((4, 5)),
+  ]
+
+  expected = np.einsum("ij,jk,kl->il", *arrays, optimize=True)
+  actual = moeinsum.einsum(
+    "ij,jk,kl->il",
+    *arrays,
+    backend="native",
+    optimize=[(1, 2), (0, 1)],
+  )
+
+  np.testing.assert_allclose(np.asarray(actual), expected, atol=1e-10, rtol=1e-10)
 
 
 def test_einsum_max_backend_matmul_when_available() -> None:
-  """`backend="max:cpu"` runs through MAX Graph for the supported subset."""
+  """`backend="max:cpu"` runs through MAX Graph."""
   import moeinsum
   import numpy as np
 
@@ -266,32 +303,33 @@ def test_einsum_max_backend_matmul_when_available() -> None:
   a = np.arange(12, dtype=np.float32).reshape(3, 4)
   b = np.arange(20, dtype=np.float32).reshape(4, 5)
   actual = moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
-  np.testing.assert_allclose(actual, a @ b, atol=1e-5, rtol=1e-5)
+  np.testing.assert_allclose(np.asarray(actual), a @ b, atol=1e-5, rtol=1e-5)
 
 
-def test_einsum_max_backend_repeated_labels_not_supported_yet() -> None:
-  """Diagonal/trace lowering is still outside the executable MAX subset."""
+def test_einsum_max_backend_repeated_labels_when_available() -> None:
+  """Diagonal/trace lowering runs through MAX Graph gather_nd."""
   import moeinsum
   import numpy as np
 
   if not is_loadable():
     pytest.skip("max.graph not installed or ABI-blocked by moeinsum._native in this env")
 
-  with pytest.raises(NotImplementedError, match="repeated labels"):
-    moeinsum.einsum("ii->", np.eye(3, dtype=np.float32), backend="max:cpu")
+  a = np.arange(9, dtype=np.float32).reshape(3, 3)
+  np.testing.assert_allclose(
+    np.asarray(moeinsum.einsum("ii->", a, backend="max:cpu")),
+    np.asarray(np.einsum("ii->", a)),
+    atol=1e-5,
+    rtol=1e-5,
+  )
 
-
-def test_einsum_max_graph_alias_when_available() -> None:
-  """`backend="max_graph"` is a compatibility alias for the MAX Graph path."""
-  import moeinsum
-  import numpy as np
-
-  if not is_loadable():
-    pytest.skip("max.graph not installed or ABI-blocked by moeinsum._native in this env")
-
-  a = np.eye(3, dtype=np.float32)
-  actual = moeinsum.einsum("ij,jk->ik", a, a, backend="max_graph")
-  np.testing.assert_allclose(actual, a @ a, atol=1e-5, rtol=1e-5)
+  b = np.arange(18, dtype=np.float32).reshape(3, 3, 2)
+  c = np.arange(10, dtype=np.float32).reshape(2, 5)
+  np.testing.assert_allclose(
+    np.asarray(moeinsum.einsum("iij,jk->ik", b, c, backend="max:cpu")),
+    np.einsum("iij,jk->ik", b, c),
+    atol=1e-5,
+    rtol=1e-5,
+  )
 
 
 def test_einsum_unknown_backend_value_error() -> None:
@@ -302,3 +340,6 @@ def test_einsum_unknown_backend_value_error() -> None:
 
   with pytest.raises(ValueError, match="unknown backend"):
     moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="quantum")
+
+  with pytest.raises(ValueError, match="unknown backend"):
+    moeinsum.einsum("ij,jk->ik", np.eye(3), np.eye(3), backend="max_graph")

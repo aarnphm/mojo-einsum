@@ -26,20 +26,10 @@ if "MOJO_PYTHON_LIBRARY" not in os.environ:
     if _candidate.is_file():
       os.environ["MOJO_PYTHON_LIBRARY"] = str(_candidate)
 
-# `_native.so` is built with rpaths into the in-source bazel layout
-# (`~/workspace/modular/bazel-bin/{KGEN,MLRT}/`), but the runtime dylibs
-# actually live in the `_solib_darwin_arm64/_U{KGEN,MLRT,Support}/`
-# variant dirs alongside them. Prepend those to DYLD_LIBRARY_PATH so
-# `dlopen()` finds `libKGENCompilerRTShared.dylib` &
-# `libAsyncRTMojoBindings.dylib` without forcing a manual install_name
-# rewrite.
-_BAZEL_BIN = Path("/Users/aarnphm/workspace/modular/bazel-bin")
-_SOLIB_ROOTS = [
-  _BAZEL_BIN / "_solib_darwin_arm64" / "_UKGEN",
-  _BAZEL_BIN / "_solib_darwin_arm64" / "_UMLRT",
-  _BAZEL_BIN / "_solib_darwin_arm64" / "_USupport",
-]
-if any(p.is_dir() for p in _SOLIB_ROOTS):
+# `_native.so` is built against the repo-local uv environment. Keep that
+# runtime first in subprocesses too; stale in-tree Modular dylibs can share
+# names while missing symbols from the packaged compiler runtime.
+_MODULAR_LIB = _REPO_ROOT / ".venv" / "lib" / "python3.11" / "site-packages" / "modular" / "lib"
+if _MODULAR_LIB.is_dir():
   _existing = os.environ.get("DYLD_LIBRARY_PATH", "")
-  _new = ":".join(str(p) for p in _SOLIB_ROOTS if p.is_dir())
-  os.environ["DYLD_LIBRARY_PATH"] = f"{_new}:{_existing}" if _existing else _new
+  os.environ["DYLD_LIBRARY_PATH"] = f"{_MODULAR_LIB}:{_existing}" if _existing else str(_MODULAR_LIB)

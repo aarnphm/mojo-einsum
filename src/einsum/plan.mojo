@@ -1,8 +1,7 @@
 """Contraction plan IR.
 
 The plan is a backend-agnostic record of what to compute. It is built from an
-`EinsumEquation` and consumed by any backend: reference, max, native, or
-max_graph.
+`EinsumEquation` and consumed by any backend: reference, max, or native.
 
 A plan is an ordered list of `PlanStep`s. Each step is one of:
   - `UnaryStep`: a single-operand op (reduce / diagonal / trace / transpose).
@@ -108,6 +107,100 @@ def _index_of(labels: List[Int], lbl: Int) -> Int:
         if labels[i] == lbl:
             return i
     return -1
+
+
+def _append_unique(mut out: List[Int], labels: List[Int]) -> None:
+    for i in range(len(labels)):
+        var lbl = labels[i]
+        if not _label_in(out, lbl):
+            out.append(lbl)
+
+
+def _labels_equal(lhs: List[Int], rhs: List[Int]) -> Bool:
+    if len(lhs) != len(rhs):
+        return False
+    for i in range(len(lhs)):
+        if lhs[i] != rhs[i]:
+            return False
+    return True
+
+
+def _dedupe_labels(labels: List[Int]) -> List[Int]:
+    var out = List[Int]()
+    for i in range(len(labels)):
+        var lbl = labels[i]
+        if not _label_in(out, lbl):
+            out.append(lbl)
+    return out^
+
+
+def _has_repeated_labels(labels: List[Int]) -> Bool:
+    var seen = List[Int]()
+    for i in range(len(labels)):
+        var lbl = labels[i]
+        if _label_in(seen, lbl):
+            return True
+        seen.append(lbl)
+    return False
+
+
+def _filter_labels(labels: List[Int], keep: List[Int]) -> List[Int]:
+    var out = List[Int]()
+    for i in range(len(labels)):
+        var lbl = labels[i]
+        if _label_in(keep, lbl):
+            out.append(lbl)
+    return out^
+
+
+def _future_needed_labels(
+    working: List[List[Int]],
+    final_labels: List[Int],
+    skip_a: Int,
+    skip_b: Int,
+) -> List[Int]:
+    var future = List[Int]()
+    _append_unique(future, final_labels)
+    for i in range(len(working)):
+        if i == skip_a or i == skip_b:
+            continue
+        _append_unique(future, working[i])
+    return future^
+
+
+def _step_output_labels(
+    lhs: List[Int],
+    rhs: List[Int],
+    future: List[Int],
+) -> List[Int]:
+    var out = List[Int]()
+    for i in range(len(lhs)):
+        var lbl = lhs[i]
+        if _label_in(future, lbl) and not _label_in(out, lbl):
+            out.append(lbl)
+    for i in range(len(rhs)):
+        var lbl = rhs[i]
+        if _label_in(future, lbl) and not _label_in(out, lbl):
+            out.append(lbl)
+    return out^
+
+
+def _append_diagonal_cleanup_step(
+    mut steps: List[PlanStep],
+    mut working: List[List[Int]],
+    operand_idx: Int,
+) raises -> None:
+    var labels = working[operand_idx].copy()
+    if not _has_repeated_labels(labels):
+        return
+    var out_labels = _dedupe_labels(labels)
+    var unary = build_unary_step(
+        operand_idx,
+        labels,
+        out_labels.copy(),
+    )
+    steps.append(PlanStep(unary^))
+    working[operand_idx] = out_labels^
 
 
 def classify_pair(
@@ -355,3 +448,127 @@ def build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
         acc_labels = step_out^
 
     return ContractionPlan(steps^, n, eq.output.copy())
+
+
+def build_plan_from_path(
+    eq: EinsumEquation,
+    path: List[List[Int]],
+) raises -> ContractionPlan:
+    """Build a `ContractionPlan` from explicit working-set path steps.
+
+    Each path element has arity 1 for a unary cleanup step or arity 2 for a
+    pairwise contraction. Pairwise output labels are the lhs/rhs union that
+    survives into either the final equation output or a later working-set
+    operand. Unary steps perform the same diagonal/reduce/transpose cleanup for
+    their operand.
+    """
+    var steps = List[PlanStep]()
+    var working = List[List[Int]]()
+    for i in range(eq.n_operands()):
+        working.append(eq.inputs[i].copy())
+
+    for path_idx in range(len(path)):
+        ref raw_step = path[path_idx]
+        if len(raw_step) == 1:
+            var operand_idx = raw_step[0]
+            if operand_idx < 0 or operand_idx >= len(working):
+                raise Error(
+                    String(
+                        "build_plan_from_path: unary step ",
+                        path_idx,
+                        " operand index ",
+                        operand_idx,
+                        " out of range",
+                    )
+                )
+            var labels = working[operand_idx].copy()
+            var future = _future_needed_labels(
+                working,
+                eq.output,
+                operand_idx,
+                -1,
+            )
+            var deduped = _dedupe_labels(labels)
+            var out_labels = _filter_labels(deduped, future)
+            var unary = build_unary_step(
+                operand_idx,
+                labels,
+                out_labels.copy(),
+            )
+            steps.append(PlanStep(unary^))
+            working[operand_idx] = out_labels^
+        elif len(raw_step) == 2:
+            var lhs_idx = raw_step[0]
+            var rhs_idx = raw_step[1]
+            if lhs_idx == rhs_idx:
+                raise Error(
+                    String(
+                        "build_plan_from_path: pairwise step ",
+                        path_idx,
+                        " uses the same operand twice",
+                    )
+                )
+            if (
+                lhs_idx < 0
+                or lhs_idx >= len(working)
+                or rhs_idx < 0
+                or rhs_idx >= len(working)
+            ):
+                raise Error(
+                    String(
+                        "build_plan_from_path: pairwise step ",
+                        path_idx,
+                        " index out of range",
+                    )
+                )
+            _append_diagonal_cleanup_step(steps, working, lhs_idx)
+            _append_diagonal_cleanup_step(steps, working, rhs_idx)
+            var lhs = working[lhs_idx].copy()
+            var rhs = working[rhs_idx].copy()
+            var future = _future_needed_labels(
+                working,
+                eq.output,
+                lhs_idx,
+                rhs_idx,
+            )
+            var out_labels = _step_output_labels(lhs, rhs, future)
+            var pair = classify_pair(lhs, rhs, out_labels.copy())
+            pair.lhs_idx = lhs_idx
+            pair.rhs_idx = rhs_idx
+            steps.append(PlanStep(pair^))
+
+            var next_working = List[List[Int]]()
+            for i in range(len(working)):
+                if i != lhs_idx and i != rhs_idx:
+                    next_working.append(working[i].copy())
+            next_working.append(out_labels^)
+            working = next_working^
+        else:
+            raise Error(
+                String(
+                    "build_plan_from_path: step ",
+                    path_idx,
+                    " has arity ",
+                    len(raw_step),
+                    ", expected 1 or 2",
+                )
+            )
+
+    if len(working) != 1:
+        raise Error(
+            String(
+                "build_plan_from_path: path leaves ",
+                len(working),
+                " tensors; expected 1",
+            )
+        )
+
+    if not _labels_equal(working[0], eq.output):
+        var final_unary = build_unary_step(
+            0,
+            working[0].copy(),
+            eq.output.copy(),
+        )
+        steps.append(PlanStep(final_unary^))
+
+    return ContractionPlan(steps^, eq.n_operands(), eq.output.copy())

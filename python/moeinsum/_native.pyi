@@ -4,6 +4,12 @@ def einsum_reference(
   operands_flat: list[list[float]],
   operand_shapes: list[list[int]],
 ) -> tuple[list[float], list[int]]: ...
+def einsum_native(
+  eq: str,
+  operands_flat: list[list[float]],
+  operand_shapes: list[list[int]],
+  path: list[tuple[int, ...]],
+) -> tuple[list[float], list[int]]: ...
 def einsum_path(
   eq: str,
   operand_shapes: list[list[int]],

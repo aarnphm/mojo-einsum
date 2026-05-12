@@ -19,8 +19,8 @@ Per contraction step this mirrors JAX's lowering shape:
   - permute back to the equation's stated output order.
 
 Unary steps (trace, diagonal, axis-sum, transpose) are emitted in the spec. The
-current executable MAX path supports the BMM-lowerable subset; diagonal
-extraction remains a reference-backend case.
+current executable MAX path lowers diagonals with `gather_nd` and pairwise
+contractions through matmul-shaped graph ops.
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ class MaxGraphBackend:
   `execute(eq, shapes, path, operands)`, the same signature future native
   backends should share.
 
-  v0.1 status: executable for the same BMM-lowerable subset as `backend="max"`.
+  v0.1 status: executable for the same MAX Graph path as `backend="max"`.
   The plan-to-graph translation (`plan_to_graph_spec`) is Mojo-owned and tested;
   graph object construction still uses MAX's Python API.
   """

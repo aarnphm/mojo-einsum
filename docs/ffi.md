@@ -5,7 +5,7 @@ date: 2026/05/11
 
 P5 is now specifically the Mojo cutover, not the first working MAX path.
 The Python MAX Graph backend already makes `backend="max[:cpu|gpu]"`
-executable for the BMM-lowerable subset. The remaining FFI rewire matters
+executable for the shipped equation grammar. The remaining FFI rewire matters
 because P11 (native CPU GETT), P12 (native GPU SM90), deterministic
 low-precision controls, and zero-copy device ownership all want
 `TileTensor` over an unowned pointer instead of Python-side NumPy buffers.
@@ -121,7 +121,7 @@ Python MAX Graph bridge. The Mojo cutover replaces that call with the FFI
 entry above:
 
 ```python
-_BACKENDS = ("reference", "max", "max:cpu", "max:gpu", "max_graph")
+_BACKENDS = ("reference", "native", "max", "max:cpu", "max:gpu")
 
 if backend == "max":
     return _einsum_max_native(
@@ -164,9 +164,10 @@ expanded, not replaced, when the Mojo cutover lands:
 1. Add `mojo-include-paths` to `pyproject.toml`.
 2. Implement `einsum_max_py` in `src/lib.mojo` with the rank
    monomorphization block.
-3. Implement `_execute_pairwise(step, lhs_tile, rhs_tile, ...)` in
-   `src/einsum/backends/max.mojo` per the four-step recipe.
-4. Implement `_execute_unary(step, in_tile, out_tile)`.
+3. Replace the current flat-buffer `_execute_pairwise(...)` in
+   `src/einsum/backends/max.mojo` with the TileTensor four-step recipe.
+4. Replace the current flat-buffer `_execute_unary(...)` plumbing with
+   TileTensor layout/view plumbing.
 5. Redirect `einsum(backend="max", ...)` from the Python MAX Graph bridge
    to the new FFI once feature coverage is at least equal.
 6. Add `_interop.to_dlpack`.
@@ -182,8 +183,8 @@ expanded, not replaced, when the Mojo cutover lands:
 
 **P11 - Native CPU GETT (3 days):**
 
-1. `src/einsum/backends/native.mojo` skeleton on the same trait as
-   `MaxBackend`.
+1. `src/einsum/backends/native.mojo` already exposes the same flat-buffer
+   executor seam as `MaxBackend`; replace the inner pairwise loop with GETT.
 2. BLIS-style packing with index re-mapping during pack - TBLIS approach,
    `arxiv 1607.00291`.
 3. Acceptance: beats `MaxBackend` on permute-dominated TTGT, e.g.
@@ -214,8 +215,11 @@ expanded, not replaced, when the Mojo cutover lands:
 
 ## Current state
 
-- `src/einsum/backends/max.mojo` is a Mojo stub; this doc holds the
-  four-step lowering recipe until the TileTensor cutover lands.
+- `src/einsum/backends/max.mojo` is no longer a stub. It implements the
+  current flat-buffer ABI with plan working-set semantics, pairwise
+  contractions, unary view/reduce composition, and deterministic reductions.
+  This doc now describes the remaining TileTensor / `linalg.batched_matmul`
+  cutover.
 - `python/moeinsum/_max_graph.py` ships the Python-side plan-to-graph
   translation (P14). `classify_pair(...)` and `plan_to_graph_spec(...)`
   are the dim-classifier and op-list emission - both `MaxBackend` (P5)

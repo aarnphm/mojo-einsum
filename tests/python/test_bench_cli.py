@@ -44,16 +44,15 @@ def _bench_args(equation: str, shapes: list[str], **extra: object) -> list[str]:
 
 def _run(*argv: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
   env = os.environ.copy()
-  # Carry DYLD_LIBRARY_PATH through - conftest.py sets it but only at
-  # pytest import time; subprocess starts fresh.
-  for path in (
-    "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_UKGEN",
-    "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_UMLRT",
-    "/Users/aarnphm/workspace/modular/bazel-bin/_solib_darwin_arm64/_USupport",
-  ):
-    if Path(path).is_dir():
-      existing = env.get("DYLD_LIBRARY_PATH", "")
-      env["DYLD_LIBRARY_PATH"] = f"{path}:{existing}" if existing else path
+  # Carry the repo-local packaged Modular runtime through. The extension's
+  # rpath already points here; putting it first defends against a stale
+  # shell-level DYLD path into an in-tree Modular build.
+  modular_lib = (
+    Path(__file__).parent.parent.parent / ".venv" / "lib" / "python3.11" / "site-packages" / "modular" / "lib"
+  )
+  if modular_lib.is_dir():
+    existing = env.get("DYLD_LIBRARY_PATH", "")
+    env["DYLD_LIBRARY_PATH"] = f"{modular_lib}:{existing}" if existing else str(modular_lib)
   return subprocess.run(
     list(argv),
     capture_output=True,

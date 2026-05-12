@@ -1,6 +1,6 @@
 # moeinsum
 
-An einsum implementation in Mojo with a backend-pluggable architecture, opt_einsum-equivalent path optimizer, and a numpy-compatible Python API.
+An einsum implementation in Mojo
 
 ```python
 import numpy as np
@@ -30,11 +30,12 @@ to force.
 - **Plan IR** (`plan.mojo`): backend-agnostic `ContractionPlan` with B/K/M/N classification per JAX's `_einsum`.
 - **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `branch`, `random-greedy`, and `auto` algorithms.
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
-- **MAX Graph backend** (`python/moeinsum/_max_backend.py`): executable `backend="max[:cpu|gpu]"` for the BMM-lowerable subset, including ellipsis, size-1 broadcast, unary transpose, and reduce-sum. Diagonal / trace still route to `reference`.
+- **MAX Graph backend** (`python/moeinsum/_max_backend.py`): executable `backend="max[:cpu|gpu]"` for the shipped equation grammar, including ellipsis, size-1 broadcast, diagonal / trace, unary transpose, reduce-sum, and matmul-shaped pairwise steps.
+- **Native backend** (`backends/native.mojo`): executable Mojo flat-buffer plan executor for the full grammar, with SIMD/GPU GETT kernel cutover pending.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
 - **Bench CLI**: `moeinsum-bench` script (installed by `pip install -e .`), JSON output, optional stderr progress bars, and compare rows for numpy / opt_einsum / jax / torch / mlx.
-- **Tests**: 481 passing Python cases in the current local run: numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / bench-CLI / hypothesis-property / MAX-backend coverage. Optional framework and MAX-runtime tests skip when the dependency or dlopen path is unavailable.
+- **Tests**: Python and Mojo coverage for numpy-parity / JAX-corpus / opt_einsum-path-parity / parser / path / branch / explicit-path / cache / interop / bench-CLI / hypothesis-property / MAX-backend coverage. Optional framework and MAX-runtime tests skip when the dependency or dlopen path is unavailable.
 
 ## Docs
 
@@ -56,28 +57,26 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 
 ## Roadmap
 
-| Phase | Status   | What                                                                                                 |
-| ----- | -------- | ---------------------------------------------------------------------------------------------------- |
-| P0    | done     | Scaffolding                                                                                          |
-| P1    | done     | Reference backend + parser + plan + numpy bridge                                                     |
-| P2    | done     | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                               |
-| P3    | done     | Unary kernels (transpose / diagonal / sum / trace)                                                   |
-| P4    | done     | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family                       |
-| P5    | partial  | Python MAX Graph backend shipped; Mojo `TileTensor` / `linalg.batched_matmul` cutover pending        |
-| P6    | done     | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred               |
-| P7    | done     | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                                         |
-| P8    | done     | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out)             |
-| P9    | done\*   | Precision parameters wired; bf16 covered on the MAX Graph path                                       |
-| P10   | done     | Python-side `backend="max:gpu"` validation on B200; Mojo-side `target="gpu"` waits on P5             |
-| P11   | skeleton | Native CPU GETT skeleton at `src/einsum/backends/native.mojo`; kernel work pending                   |
-| P12   | skeleton | Native GPU SM90 skeleton in the same module; WGMMA kernel pending                                    |
-| P13   | done     | Benchmark CLI (`moeinsum-bench` script)                                                              |
-| P14   | partial  | `MaxGraphBackend`: plan-to-graph spec + executable bridge shipped; whole-graph fusion polish pending |
-| P15   | done     | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                            |
+| Phase | Status  | What                                                                                                             |
+| ----- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| P0    | done    | Scaffolding                                                                                                      |
+| P1    | done    | Reference backend + parser + plan + numpy bridge                                                                 |
+| P2    | done    | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                                           |
+| P3    | done    | Unary kernels (transpose / diagonal / sum / trace)                                                               |
+| P4    | done    | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family                                   |
+| P5    | partial | Python MAX Graph + Mojo flat-buffer `MaxBackend` shipped; `TileTensor` / `linalg.batched_matmul` cutover pending |
+| P6    | done    | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred                           |
+| P7    | done    | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                                                     |
+| P8    | done    | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out)                         |
+| P9    | done\*  | Precision parameters wired; bf16 covered on the MAX Graph path                                                   |
+| P10   | done    | Python-side `backend="max:gpu"` validation on B200; Mojo-side `target="gpu"` waits on P5                         |
+| P11   | partial | Native flat-buffer backend shipped; SIMD CPU GETT kernel cutover pending                                         |
+| P12   | partial | Native flat-buffer backend shipped; GPU SM90 WGMMA kernel cutover pending                                        |
+| P13   | done    | Benchmark CLI (`moeinsum-bench` script)                                                                          |
+| P14   | partial | `MaxGraphBackend`: plan-to-graph spec + executable bridge shipped; whole-graph fusion polish pending             |
+| P15   | done    | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                                        |
 
-`done` = shipped; `done\*` = shipped first pass, real polish deferred to P5; `partial` = useful executable surface shipped with a named lower-level cutover still pending; `skeleton` = scaffolding landed, full implementation pending; `pending` = not shipped yet.
-
-See [`progress.md`](progress.md) for the local working notes (gitignored).
+`done` = shipped; `done\*` = shipped first pass, real polish deferred to P5; `partial` = useful executable surface shipped with a named lower-level cutover still pending; `pending` = not shipped yet.
 
 ## Architecture
 
@@ -89,11 +88,15 @@ We create a small plan IR to let backend decides how to consume this.
 - A backend consumes the plan and decides how each step executes
   - the `reference` backend uses a naive global-index loop
   - `max` builds a MAX Graph over pairwise batched-matmul lowerings;
-  - `native` will run our own SIMD/GPU kernels with GETT-style fused permute;
-  - `max_graph` exposes the MAX Graph bridge and plan-spec inspection surface.
+  - `native` runs the Mojo flat-buffer plan executor today, then swaps in SIMD/GPU kernels with GETT-style fused permute.
 
-See [`docs/derivations.md`](docs/derivations.md) Section 1 for the BMM-lowering proof.
+See [[derivations#1. The BMM lowering|BMM lowering section]] for proof.
 
 ## License
 
 Apache 2.0. See [`LICENSE`](LICENSE).
+
+## Acknowledgement
+
+- [opt_einsum](https://optimized-einsum.readthedocs.io/en/stable/)
+- [JAX](https://github.com/jax-ml/jax/blob/main/jax/_src/numpy/einsum.py)

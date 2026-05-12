@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import cast
 
 from . import _native
 from ._cost import path_cost
@@ -22,7 +21,7 @@ _OPTIMIZE = (
   "branch-2",
   "branch-1",
 )
-_BACKENDS = ("reference", "max", "max:cpu", "max:gpu", "max_graph", "native")
+_BACKENDS = ("reference", "max", "max:cpu", "max:gpu", "native")
 
 
 def _parse_shapes(shape_strs: list[str]) -> list[tuple[int, ...]]:
@@ -53,7 +52,7 @@ def _compute_path(eq: str, shapes: list[tuple[int, ...]], optimize: str) -> list
     result = _native.einsum_path(eq, shapes_lists)
   else:
     result = _native.einsum_compute_path(eq, shapes_lists, optimize)
-  return [tuple(cast("tuple[int, ...]", step)) for step in result]
+  return [tuple(step) for step in result]
 
 
 def _path_cost_record(eq: str, shapes: list[tuple[int, ...]], path: list[tuple[int, ...]]) -> dict[str, object]:
@@ -109,7 +108,6 @@ def _max_record(
     "max": "Accelerator() if max.driver.accelerator_count() > 0 else CPU()",
     "max:cpu": "CPU()",
     "max:gpu": "Accelerator(), error if none exists",
-    "max_graph": "alias of max",
   }[backend]
   spec.update({
     "status": "ok",
@@ -118,18 +116,23 @@ def _max_record(
     "implementation": "python/moeinsum/_max_backend.py::_lower_graph",
     "compiler_target": "MAX Graph",
   })
-  if backend == "max_graph":
-    spec["alias_of"] = "max"
   return spec
 
 
 def _native_record() -> dict[str, object]:
   return {
-    "status": "planned",
-    "supported": False,
-    "reason": "P11/P12 skeleton only; public API raises NotImplementedError today",
+    "status": "ok",
+    "supported": True,
     "implementation": "src/einsum/backends/native.mojo",
-    "planned_lowering": [
+    "ir": "EinsumEquation -> ContractionPlan -> flat-buffer Mojo plan executor",
+    "ops": [
+      {
+        "kind": "plan_working_set",
+        "target": "UnsafePointer[Float64] buffers",
+        "notes": "correctness backend for native dispatch; deterministic mixed-radix reductions",
+      }
+    ],
+    "kernel_cutover": [
       "TileTensor/RuntimeLayout operand views",
       "GETT packer for permute-heavy contractions",
       "linalg.batched_matmul fallback for already-BMM-shaped contractions",
@@ -155,7 +158,7 @@ def inspect_lowering(
   for name in selected:
     if name == "reference":
       backend_records[name] = _reference_record()
-    elif name in {"max", "max:cpu", "max:gpu", "max_graph"}:
+    elif name in {"max", "max:cpu", "max:gpu"}:
       backend_records[name] = _max_record(eq, shapes, path, name)
     elif name == "native":
       backend_records[name] = _native_record()

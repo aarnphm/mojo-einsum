@@ -55,10 +55,10 @@ Hand-authored + JAX corpus + hypothesis clears $\ge 150$.
 
 Status: **shipped** via the Python MAX Graph backend (`backend="max"`). Both paths compile to the same `max.graph.ops.matmul` kernel; the shim adds a model-cache lookup. The Mojo-side `linalg.batched_matmul` dispatch is deferred behind `mojo-include-paths` against the modular monorepo.
 
-| Where                                                                                  | Scope                                                                                                                                                                              |
-| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/python/test_max_backend_perf.py::test_max_backend_matches_raw_max_graph_matmul` | Numerical: `backend="max:cpu"` output matches a hand-built `max.graph.ops.matmul` graph on `(256,256)` / `(512,512)` fp32 within `atol=1e-5`.                                      |
-| `tests/python/test_max_backend_perf.py::test_max_backend_overhead_within_factor`       | Hot-path ratio: 5 warmup + 25 timed iters, ours / raw `<= 1.5x` at `size=512`; the wider bound accounts for CI noise.                                                             |
+| Where                                                                                  | Scope                                                                                                                                         |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/python/test_max_backend_perf.py::test_max_backend_matches_raw_max_graph_matmul` | Numerical: `backend="max:cpu"` output matches a hand-built `max.graph.ops.matmul` graph on `(256,256)` / `(512,512)` fp32 within `atol=1e-5`. |
+| `tests/python/test_max_backend_perf.py::test_max_backend_overhead_within_factor`       | Hot-path ratio: 5 warmup + 25 timed iters, ours / raw `<= 1.5x` at `size=512`; the wider bound accounts for CI noise.                         |
 
 ---
 
@@ -66,7 +66,7 @@ Status: **shipped** via the Python MAX Graph backend (`backend="max"`). Both pat
 
 > `'abcd,dcba->'`-class contractions within $2\times$ of cuTENSOR (GPU) / TBLIS (CPU) at the GETT phase.
 
-Status: **blocked** on P11/P12 (`NativeOptimizedBackend`). Skeleton at `src/einsum/backends/native.mojo` raises a phase-aware error; bench harness in `python/moeinsum/bench.py` (`--sweep-optimizers`, `--vs-numpy`).
+Status: **partially shipped**. `backend="native"` executes the Mojo flat-buffer plan engine and is covered by parity tests; the optimized GETT CPU/GPU kernels remain the P11/P12 performance blocker. Bench harness lives in `python/moeinsum/bench.py` (`--sweep-optimizers`, `--vs-numpy`).
 
 ---
 

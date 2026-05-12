@@ -45,31 +45,31 @@ date: 2026/05/10
 ## Gaps
 
 - **No cotengra equivalent.** Tensor-network workloads compute the path externally. opt_einsum's family covers the current ML-shaped target cases; quantum-circuit simulation needs cotengra.
-- **No GETT.** P11/P12 work. Awkward permutes go through TTGT-style reshape / transpose / matmul lowering until then.
-- **MAX diagonal gap.** The reference backend supports trace and diagonal. The executable MAX Graph path rejects repeated labels inside one operand until diagonal view lowering lands there too.
+- **No optimized GETT yet.** P11/P12 kernel work remains. Awkward permutes go through flat-buffer/native or TTGT-style MAX lowering until then.
+- **MAX diagonal lowering is explicit.** The executable MAX Graph path lowers repeated labels through `gather_nd`, so trace / diagonal cases now run there. It is a materializing graph op today, while the Mojo native path can still become a stride-only view in the GETT cutover.
 - **Low precision is backend-limited.** bf16 is covered on the MAX Graph path. fp16, fp8 (e4m3, e5m2), and opcode-level accumulator control wait on the Mojo TileTensor/native cutover.
 - **No autograd.** PyTorch and JAX wrap einsum with autograd; moeinsum is a primitive.
 
 ## Project seams
 
-- **Backend-pluggable dispatch.** `reference`, `max`, `native`, `max_graph` share equation and plan IR. PyTorch/JAX keep that seam internal.
+- **Backend-pluggable dispatch.** `reference`, `max`, and `native` share equation and plan IR. PyTorch/JAX keep that seam internal.
 - **Compile-time paths.** The optimizer is in Mojo and already shares the same recurrence as the runtime API. Shape-specialized straight-line GEMM overloads are still future work.
 - **JIT plan cache.** Per-(equation, dtype-sig, rank-sig, backend) cache. Repeated calls reuse the parsed/planned path.
 
 ## Design sources
 
-| From       | Source                                                   | Why                                                               |
-| ---------- | -------------------------------------------------------- | ----------------------------------------------------------------- |
-| opt_einsum | Path algorithms (greedy, optimal, random-greedy, branch) | Established contraction-path algorithms                           |
-| PyTorch    | `sumproduct_pair` B/K/M/N classification                 | Right factorization; JAX uses the same one                        |
-| JAX        | lhs/rhs-swap output-permutation trick                    | Avoids a final transpose for some contractions                     |
-| cuTENSOR   | GETT algorithm; plan-cache pattern                       | Kernel and caching strategy                                       |
-| TBLIS      | BLIS-packing-aware tensor contraction                    | The CPU implementation of GETT                                    |
-| MLX        | Lazy evaluation for whole-graph fusion                   | Future `max_graph` polish should let MAX fuse beyond one einsum   |
-| cotengra   | Hypergraph paths                                         | Needed for n > 30 tensor-network cases                            |
+| From       | Source                                                   | Why                                                           |
+| ---------- | -------------------------------------------------------- | ------------------------------------------------------------- |
+| opt_einsum | Path algorithms (greedy, optimal, random-greedy, branch) | Established contraction-path algorithms                       |
+| PyTorch    | `sumproduct_pair` B/K/M/N classification                 | Right factorization; JAX uses the same one                    |
+| JAX        | lhs/rhs-swap output-permutation trick                    | Avoids a final transpose for some contractions                |
+| cuTENSOR   | GETT algorithm; plan-cache pattern                       | Kernel and caching strategy                                   |
+| TBLIS      | BLIS-packing-aware tensor contraction                    | The CPU implementation of GETT                                |
+| MLX        | Lazy evaluation for whole-graph fusion                   | Future MAX Graph polish should let MAX fuse beyond one einsum |
+| cotengra   | Hypergraph paths                                         | Needed for n > 30 tensor-network cases                        |
 
 ## Rejected designs
 
 - **Tensor Comprehensions' polyhedral search.** Schedule-search compiler work is out of scope; the current target is specialized kernels plus simple dispatch.
 - **Halide-style schedule language.** Extra developer surface without a clear einsum win.
-- **A graph IR.** `ContractionPlan` is a list of B/K/M/N-classified pairwise steps plus permutations. Graph-level fusion and cross-op layout belong in MAX, which is why `max_graph` is a backend, not the core.
+- **A graph IR.** `ContractionPlan` is a list of B/K/M/N-classified pairwise steps plus permutations. Graph-level fusion and cross-op layout belong in MAX rather than the core IR.

@@ -1,8 +1,7 @@
-"""Executable MAX Graph backend for BMM-lowerable contractions.
+"""Executable MAX Graph backend for einsum plan steps.
 
 The backend supports ellipsis expansion, size-1 broadcast, pairwise
-matmul, unary transpose, and unary reduce-sum. Repeated labels raise
-`NotImplementedError` rather than falling back to the reference path.
+matmul, unary transpose, diagonal extraction, and unary reduce-sum.
 """
 
 from __future__ import annotations
@@ -148,11 +147,6 @@ def _parse_equation(eq: str, shapes: list[tuple[int, ...]]) -> tuple[list[str], 
   return inputs, final_output
 
 
-def _reject_repeated_labels(labels: str) -> None:
-  if len(set(labels)) != len(labels):
-    raise NotImplementedError("backend='max' does not support repeated labels/diagonals yet")
-
-
 def _label_sizes(labels: str, shape: tuple[int, ...]) -> dict[str, int]:
   if len(labels) != len(shape):
     raise ValueError(f"operand labels {labels!r} have rank {len(labels)} but shape has rank {len(shape)}")
@@ -163,6 +157,10 @@ def _label_sizes(labels: str, shape: tuple[int, ...]) -> dict[str, int]:
       raise ValueError(f"size conflict on label {label!r}: {previous} vs {dim}")
     out[label] = dim
   return out
+
+
+def _unique_labels(labels: str) -> str:
+  return "".join(dict.fromkeys(labels))
 
 
 def _product(values: list[int]) -> int:
@@ -208,7 +206,6 @@ def _reshape(value: TensorValue, shape: list[int]) -> TensorValue:
 def _reduce_out_labels(node: _Node, keep: set[str]) -> _Node:
   from max.graph import ops  # noqa: PLC0415
 
-  _reject_repeated_labels(node.labels)
   value = node.value
   labels = list(node.labels)
   shape = list(node.shape)
@@ -249,9 +246,6 @@ def _broadcast_if_needed(
 
 
 def _pair_layout(lhs: _LabeledShape, rhs: _LabeledShape, out_labels: str, *, swapped: bool) -> _PairLayout:
-  _reject_repeated_labels(lhs.labels)
-  _reject_repeated_labels(rhs.labels)
-
   lhs_sizes = _label_sizes(lhs.labels, lhs.shape)
   rhs_sizes = _label_sizes(rhs.labels, rhs.shape)
   sizes = _merge_label_sizes(lhs_sizes, rhs_sizes)
@@ -276,6 +270,36 @@ def _pair_layout(lhs: _LabeledShape, rhs: _LabeledShape, out_labels: str, *, swa
     rhs_order=batch + contract + free_rhs,
     natural_labels=batch + free_lhs + free_rhs,
     swapped=swapped,
+  )
+
+
+def _diagonal_indices(labels: str, shape: tuple[int, ...]) -> tuple[np.ndarray, str, tuple[int, ...]]:
+  """Return gather_nd indices that collapse repeated labels to one axis."""
+  sizes = _label_sizes(labels, shape)
+  unique = _unique_labels(labels)
+  if unique == labels:
+    return np.empty((), dtype=np.int32), labels, shape
+
+  unique_shape = tuple(sizes[label] for label in unique)
+  grids = np.indices(unique_shape, dtype=np.int32)
+  label_to_grid = {label: grids[idx] for idx, label in enumerate(unique)}
+  indices = np.stack([label_to_grid[label] for label in labels], axis=-1)
+  return np.ascontiguousarray(indices, dtype=np.int32), unique, unique_shape
+
+
+def _diagonalize_node(node: _Node, device: Device) -> _Node:
+  indices, labels, shape = _diagonal_indices(node.labels, node.shape)
+  if labels == node.labels:
+    return node
+
+  from max.dtype import DType  # noqa: PLC0415
+  from max.graph import DeviceRef, ops  # noqa: PLC0415
+
+  index_value = ops.constant(indices, dtype=DType.int32, device=DeviceRef.from_device(device))
+  return _Node(
+    value=ops.gather_nd(node.value, index_value, batch_dims=0),
+    labels=labels,
+    shape=shape,
   )
 
 
@@ -340,7 +364,6 @@ def _broadcast_payload(
 
 
 def _reduce_node_for_spec(node: _LoweringNode, keep: set[str]) -> tuple[_LoweringNode, dict[str, object] | None]:
-  _reject_repeated_labels(node.labels)
   sizes = _label_sizes(node.labels, node.shape)
   labels = "".join(label for label in node.labels if label in keep)
   if labels == node.labels:
@@ -356,6 +379,25 @@ def _reduce_node_for_spec(node: _LoweringNode, keep: set[str]) -> tuple[_Lowerin
   )
 
 
+def _diagonalize_node_for_spec(node: _LoweringNode, operand: int) -> tuple[_LoweringNode, dict[str, object] | None]:
+  indices, labels, shape = _diagonal_indices(node.labels, node.shape)
+  if labels == node.labels:
+    return node, None
+  return (
+    _LoweringNode(labels=labels, shape=shape),
+    {
+      "kind": "diagonal",
+      "target_op": "max.graph.ops.gather_nd",
+      "operand": operand,
+      "src_labels": node.labels,
+      "dst_labels": labels,
+      "src_shape": list(node.shape),
+      "dst_shape": list(shape),
+      "index_shape": list(indices.shape),
+    },
+  )
+
+
 def lowering_spec(
   eq: str,
   shapes: list[tuple[int, ...]],
@@ -363,11 +405,15 @@ def lowering_spec(
 ) -> dict[str, object]:
   """Return the executable MAX lowering without importing `max.graph`."""
   inputs, final_output = _parse_equation(eq, shapes)
-  for labels in inputs:
-    _reject_repeated_labels(labels)
 
   working = [_LoweringNode(labels=labels, shape=shape) for labels, shape in zip(inputs, shapes, strict=True)]
   ops: list[dict[str, object]] = []
+
+  for operand, node in enumerate(working):
+    lowered, payload = _diagonalize_node_for_spec(node, operand)
+    if payload is not None:
+      ops.append(payload)
+    working[operand] = lowered
 
   for step_idx, step in enumerate(path):
     if len(step) == 1:
@@ -399,7 +445,7 @@ def lowering_spec(
     m = _product(m_shape)
     k = _product(k_shape)
     n = _product(n_shape)
-    payload = {
+    matmul_payload: dict[str, object] = {
       "kind": "matmul",
       "target_op": "max.graph.ops.matmul",
       "step": step_idx,
@@ -438,7 +484,7 @@ def lowering_spec(
         if item is not None
       ],
     }
-    ops.append(payload)
+    ops.append(matmul_payload)
 
     out = _LoweringNode(labels=out_labels, shape=tuple(_sizes_for(out_labels, layout.sizes)))
     for idx in sorted((li, ri), reverse=True):
@@ -481,14 +527,12 @@ def _lower_graph(
   from max.graph import DeviceRef, Graph, TensorType  # noqa: PLC0415
 
   inputs, final_output = _parse_equation(eq, shapes)
-  for labels in inputs:
-    _reject_repeated_labels(labels)
 
   input_types = [TensorType(dtype, shape=shape, device=DeviceRef.from_device(device)) for shape in shapes]
 
   with Graph("moeinsum_max", input_types=input_types) as graph:
     working = [
-      _Node(value=graph_input.tensor, labels=labels, shape=shape)
+      _diagonalize_node(_Node(value=graph_input.tensor, labels=labels, shape=shape), device)
       for graph_input, labels, shape in zip(graph.inputs, inputs, shapes, strict=True)
     ]
 
@@ -548,7 +592,19 @@ def _compile(
   device = _select_device(backend)
   graph = _lower_graph(eq, shapes, path, dtype, device)
   session = InferenceSession(devices=[device])
-  return _Executable(model=session.load(graph), device=device)
+  try:
+    return _Executable(model=session.load(graph), device=device)
+  except RuntimeError:
+    if backend != "max":
+      raise
+    from max.driver import CPU, accelerator_count  # noqa: PLC0415
+
+    if accelerator_count() == 0:
+      raise
+    cpu = CPU()
+    graph = _lower_graph(eq, shapes, path, dtype, cpu)
+    session = InferenceSession(devices=[cpu])
+    return _Executable(model=session.load(graph), device=cpu)
 
 
 def _max_dtype_for(dtype: np.dtype) -> DType:

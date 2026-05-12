@@ -42,15 +42,16 @@ def test_lowering_cli_reports_max_matmul_shape() -> None:
   assert op["bmm_shape"]["out"] == [3, 5]
 
 
-def test_lowering_cli_marks_repeated_labels_unsupported_on_max() -> None:
+def test_lowering_cli_reports_max_diagonal_lowering() -> None:
   proc = _run_lowering("ii->", "--shapes", "3,3", "--backend", "max")
   assert proc.returncode == 0, proc.stderr
   rec = json.loads(proc.stdout)
 
   max_rec = rec["backends"]["max"]
-  assert max_rec["status"] == "unsupported"
-  assert max_rec["supported"] is False
-  assert "repeated labels" in max_rec["reason"]
+  assert max_rec["status"] == "ok"
+  assert max_rec["supported"] is True
+  assert [op["kind"] for op in max_rec["ops"]] == ["diagonal", "reduce_sum"]
+  assert max_rec["ops"][0]["target_op"] == "max.graph.ops.gather_nd"
 
 
 def test_lowering_cli_reports_max_operand_swap_to_avoid_transpose() -> None:

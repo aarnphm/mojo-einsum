@@ -4,6 +4,8 @@ Exposed callables consumed by the Python wrapper:
   - `parse_equation(eq: str) -> dict`, for IR/debug introspection.
   - `einsum_reference(eq, operands_flat, operand_shapes) -> (flat_out, shape)`,
     the row-major flat-list reference backend.
+  - `einsum_native(eq, operands_flat, operand_shapes, path) -> (flat_out, shape)`,
+    the row-major flat-list native backend over a caller-supplied plan path.
   - `einsum_path(eq, operand_shapes) -> list[tuple[int, ...]]`, the naive
     left-to-right plan builder path.
   - `einsum_compute_path(eq, operand_shapes, algorithm) -> list[tuple[int, int]]`,
@@ -23,6 +25,7 @@ from einsum.plan import (
     UnaryStep,
     PairwiseStep,
     build_naive_plan,
+    build_plan_from_path,
     classify_pair,
 )
 from einsum.path import compute_path
@@ -31,6 +34,7 @@ from einsum.backends.reference import (
     compute_output_shape,
     _resolve_label_sizes,
 )
+from einsum.backends.native import execute_native
 
 
 @export
@@ -39,6 +43,7 @@ def PyInit__native() -> PythonObject:
         var module = PythonModuleBuilder("_native")
         module.def_function[parse_equation_py]("parse_equation")
         module.def_function[einsum_reference_py]("einsum_reference")
+        module.def_function[einsum_native_py]("einsum_native")
         module.def_function[einsum_path_py]("einsum_path")
         module.def_function[einsum_compute_path_py]("einsum_compute_path")
         module.def_function[max_graph_spec_py]("max_graph_spec")
@@ -297,6 +302,101 @@ def einsum_reference_py(
         operand_shapes,
         strides_list,
         out_ptr,
+        out_strides,
+    )
+
+    var flat_out_py = Python.evaluate("[]")
+    for i in range(out_alloc_n):
+        flat_out_py.append(PythonObject(out_ptr[i]))
+
+    var shape_py = Python.evaluate("[]")
+    for i in range(len(out_shape)):
+        shape_py.append(PythonObject(out_shape[i]))
+
+    for i in range(len(data_ptrs)):
+        data_ptrs[i].free()
+    out_ptr.free()
+
+    return Python.tuple(flat_out_py, shape_py)
+
+
+def einsum_native_py(
+    eq_obj: PythonObject,
+    operands_flat_obj: PythonObject,
+    operand_shapes_obj: PythonObject,
+    path_obj: PythonObject,
+) raises -> PythonObject:
+    """Native backend over flat Python lists.
+
+    Returns a 2-tuple `(flat_output_list, output_shape)`.
+    """
+    var eq_str = String(py=eq_obj)
+    var eq = parse(eq_str)
+
+    var operand_shapes = _pylist_shapes_to_mojo(operand_shapes_obj)
+
+    var operand_ranks = List[Int]()
+    for i in range(len(operand_shapes)):
+        operand_ranks.append(len(operand_shapes[i]))
+    expand_ellipsis(eq, operand_ranks)
+
+    if eq.n_operands() != Int(len(operands_flat_obj)):
+        raise Error(
+            String(
+                "einsum_native: equation has ",
+                eq.n_operands(),
+                " operands but got ",
+                Int(len(operands_flat_obj)),
+                " arrays",
+            )
+        )
+
+    var path = _py_path_to_mojo(path_obj)
+    var plan = build_plan_from_path(eq, path)
+
+    var data_ptrs = List[UnsafePointer[Float64, MutAnyOrigin]]()
+    var strides_list = List[List[Int]]()
+    for op_idx in range(eq.n_operands()):
+        var flat = operands_flat_obj[op_idx]
+        var n_elems = Int(len(flat))
+        var expected_elems: Int = 1
+        for d_idx in range(len(operand_shapes[op_idx])):
+            expected_elems *= operand_shapes[op_idx][d_idx]
+        if n_elems != expected_elems:
+            raise Error(
+                String(
+                    "einsum_native: operand ",
+                    op_idx,
+                    " flat list length ",
+                    n_elems,
+                    " != shape product ",
+                    expected_elems,
+                )
+            )
+        var ptr = alloc[Float64](n_elems)
+        for i in range(n_elems):
+            ptr[i] = Float64(py=flat[i])
+        data_ptrs.append(ptr)
+        strides_list.append(_row_major_strides(operand_shapes[op_idx]))
+
+    var out_shape = compute_output_shape(eq, operand_shapes)
+    var out_n: Int = 1
+    for i in range(len(out_shape)):
+        out_n *= out_shape[i]
+    var out_alloc_n = out_n if out_n > 0 else 1
+    var out_ptr = alloc[Float64](out_alloc_n)
+    for i in range(out_alloc_n):
+        out_ptr[i] = 0.0
+
+    var out_strides = _row_major_strides(out_shape)
+
+    execute_native(
+        plan,
+        data_ptrs,
+        operand_shapes,
+        strides_list,
+        out_ptr,
+        out_shape,
         out_strides,
     )
 

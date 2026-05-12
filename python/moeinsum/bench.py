@@ -403,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument(
     "--backend",
     default="reference",
-    choices=["reference", "max", "max:cpu", "max:gpu", "max_graph"],
+    choices=["reference", "max", "max:cpu", "max:gpu", "native"],
     help="Execution backend",
   )
   p.add_argument(

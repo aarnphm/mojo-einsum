@@ -3,9 +3,9 @@
 For v0.1:
   - `einsum(eq, *operands, backend, optimize, accum_dtype)` accepts
     numpy ndarrays and DLPack-capable framework arrays. The reference
-    backend ships for full correctness; `max` / `max:cpu` / `max:gpu`
-    cover the BMM-lowerable subset through MAX Graph (`max_graph` is a
-    compatibility alias).
+    and `native` backends ship for full correctness; `max` / `max:cpu` /
+    `max:gpu` run the shipped equation grammar through MAX Graph for
+    float32, float64, and bfloat16 tensors.
   - `einsum_path(eq, *shapes, optimize)` returns the contraction pair
     sequence the planner chose.
   - `parse_equation(eq)` is a debugging surface that returns the IR.
@@ -35,6 +35,9 @@ from ._native import (
   einsum_compute_path as _einsum_compute_path_native,
 )
 from ._native import (
+  einsum_native as _einsum_native_backend,
+)
+from ._native import (
   einsum_path as _einsum_path_native,
 )
 from ._native import (
@@ -53,14 +56,7 @@ __all__ = [
 ]
 
 
-_BACKENDS = ("reference", "max", "max:cpu", "max:gpu", "max_graph")
-# Backends in the plan that have a skeleton but are not wired through the
-# FFI yet. Keep this separate from the unknown-backend error so callers
-# get a phase-aware "not implemented" message instead of a generic typo
-# surface.
-_PLANNED_BACKENDS = {
-  "native": "P11/P12 - SIMD-tiled CPU GETT + SM90 WGMMA. Skeleton at src/einsum/backends/native.mojo.",
-}
+_BACKENDS = ("reference", "native", "max", "max:cpu", "max:gpu")
 _OPTIMIZE = (
   "naive",
   "greedy",
@@ -182,9 +178,8 @@ def einsum(
       backend:     ``"reference"`` for the full correctness backend.
                    ``"max"`` uses MAX Graph on GPU when available and
                    CPU otherwise; ``"max:gpu"`` / ``"max:cpu"`` force
-                   placement for the supported BMM-lowerable subset.
-                   ``"max_graph"`` is accepted as an alias for ``"max"``.
-                   ``"native"`` lands in a later phase.
+                   placement for the MAX Graph backend.
+                   ``"native"`` uses the Mojo plan executor.
       optimize:    Path optimizer name. ``"auto"`` (default),
                    ``"greedy"``, ``"optimal"``, ``"random-greedy"``,
                    ``"random-greedy-N"`` for any N >= 1,
@@ -225,8 +220,6 @@ def einsum(
     except TypeError as exc:
       raise TypeError(f"accum_dtype {accum_dtype!r} is not a recognised numpy dtype") from exc
   if backend not in _BACKENDS:
-    if backend in _PLANNED_BACKENDS:
-      raise NotImplementedError(f"backend {backend!r}: {_PLANNED_BACKENDS[backend]}")
     raise ValueError(f"unknown backend {backend!r}; available: {_BACKENDS}")
   if _is_explicit_path(optimize):
     # Validate eagerly so callers get a clear error. The reference backend
@@ -268,7 +261,14 @@ def einsum(
   flats = [a.astype(np.float64).ravel().tolist() for a in arrays]
   shapes = [list(a.shape) for a in arrays]
 
-  flat_out, out_shape = _einsum_reference_native(eq, flats, shapes)
+  if backend == "native":
+    if _is_explicit_path(optimize):
+      path = _validate_explicit_path(cast("Sequence[Sequence[int]]", optimize), len(operands))
+    else:
+      path = einsum_path(eq, *[tuple(a.shape) for a in arrays], optimize=cast("str", optimize))
+    flat_out, out_shape = _einsum_native_backend(eq, flats, shapes, path)
+  else:
+    flat_out, out_shape = _einsum_reference_native(eq, flats, shapes)
   out = np.array(flat_out, dtype=np.float64).reshape(tuple(out_shape))
 
   if out.dtype != dtype:
