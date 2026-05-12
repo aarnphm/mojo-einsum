@@ -198,10 +198,16 @@ parametrize lists:
 
 **DLPack zero-copy polish (1/2 day after P5):**
 
-1. `_interop.to_dlpack` for numpy / torch / jax / mlx.
-2. `einsum(...)` returns through `_from_dlpack` to the caller's framework
-   (currently always numpy fp64).
-3. Tests: torch <-> jax <-> mlx round-trip + dtype preservation.
+1. `_interop.to_dlpack` for numpy / torch / jax / mlx. Receive-side
+   (`to_numpy`) is dtype-preserving and ships; send-side does not.
+2. `einsum(...)` already round-trips via `_from_numpy(kind)`, so the
+   caller's framework / dtype survive the call. The missing piece is the
+   zero-copy edge - today each operand flows through a numpy intermediate
+   at the FFI boundary.
+3. Tests: torch <-> jax <-> mlx round-trip + dtype preservation already
+   pin in `tests/python/test_interop.py` and
+   `test_property.py::test_einsum_preserves_*`. The zero-copy assertion
+   waits on `to_dlpack`.
 
 ## Where the tree stands
 
