@@ -41,9 +41,12 @@ def _resolve_label_sizes(
 ) raises -> List[Int]:
     """Build a List[Int] of size `eq.n_labels` mapping label -> size.
 
-    Raises if the same label is given inconsistent sizes across operands
-    (other than the size-1 broadcast case, which we surface as an error
-    here and let the caller decide - reference is strict by design).
+    Cross-operand size resolution is broadcast-aware: when one operand
+    has dim=1 and another has dim=N on the same label, the resolved
+    size is N (numpy's per-label broadcast). Within a single operand
+    we keep strict equality - repeated labels like `ii->` are a
+    diagonal-extraction, never a broadcast (numpy itself rejects
+    `np.einsum('ii->', (1, 3))`).
     """
     var sizes = List[Int]()
     for _ in range(eq.n_labels):
@@ -64,24 +67,58 @@ def _resolve_label_sizes(
                     " shape dims",
                 )
             )
+
+        # Within-operand strict pass: repeated labels must share a size.
+        var local = List[Int]()
+        for _ in range(eq.n_labels):
+            local.append(-1)
         for axis in range(len(labels)):
             var lbl = labels[axis]
             var dim = shape[axis]
-            if sizes[lbl] == -1:
+            if local[lbl] == -1:
+                local[lbl] = dim
+            elif local[lbl] != dim:
+                raise Error(
+                    String(
+                        "size mismatch on label ",
+                        lbl,
+                        " within operand ",
+                        op_idx,
+                        ": axis ",
+                        axis,
+                        " has size ",
+                        dim,
+                        ", expected ",
+                        local[lbl],
+                    )
+                )
+
+        # Cross-operand merge with size-1 broadcast: (1, N) resolves to
+        # N; (M, N) with M != N and both > 1 is a real conflict.
+        for lbl in range(eq.n_labels):
+            var dim = local[lbl]
+            if dim == -1:
+                continue
+            var prev = sizes[lbl]
+            if prev == -1:
                 sizes[lbl] = dim
-            elif sizes[lbl] != dim:
+            elif prev == dim:
+                continue
+            elif prev == 1:
+                sizes[lbl] = dim
+            elif dim == 1:
+                continue
+            else:
                 raise Error(
                     String(
                         "size mismatch on label ",
                         lbl,
                         ": operand ",
                         op_idx,
-                        " axis ",
-                        axis,
                         " has size ",
                         dim,
                         ", expected ",
-                        sizes[lbl],
+                        prev,
                     )
                 )
 
@@ -103,12 +140,20 @@ def _resolve_label_sizes(
 def _flat_offset(
     label_indices: List[Int],
     operand_labels: List[Int],
+    operand_shape: List[Int],
     strides: List[Int],
 ) -> Int:
     """Compute the flat-element offset into one operand from the current
-    global label-index vector."""
+    global label-index vector.
+
+    Size-1 axes are stride-0 broadcasts: the operand has only one valid
+    element along that axis, so the label index contributes nothing to
+    the offset regardless of how the resolved label size loops outside.
+    """
     var off: Int = 0
     for axis in range(len(operand_labels)):
+        if operand_shape[axis] == 1:
+            continue
         var lbl = operand_labels[axis]
         off += label_indices[lbl] * strides[axis]
     return off
@@ -142,7 +187,12 @@ def execute_reference(
         # Compute product over operands.
         var prod: Float64 = 1.0
         for op_idx in range(eq.n_operands()):
-            var off = _flat_offset(label_idx, eq.inputs[op_idx], operand_strides[op_idx])
+            var off = _flat_offset(
+                label_idx,
+                eq.inputs[op_idx],
+                operand_shapes[op_idx],
+                operand_strides[op_idx],
+            )
             prod *= operand_data[op_idx][off]
 
         # Accumulate into output.

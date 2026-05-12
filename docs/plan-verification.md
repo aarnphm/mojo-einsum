@@ -89,7 +89,7 @@ Status: **blocked** on P11/P12 (`NativeOptimizedBackend`). Skeleton at `src/eins
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | Diagonal on non-contiguous input     | `test_cache_and_edges.py::test_diagonal_on_non_contiguous`                                                       |
 | Ellipsis with mismatched rank prefix | `test_cache_and_edges.py::test_ellipsis_mismatched_prefix`                                                       |
-| Broadcast-against-singleton          | `test_cache_and_edges.py::test_broadcast_against_singleton` (strict-rejection pinned) + `::test_broadcast_against_singleton_is_known_parity_gap` (xfail-pinned numpy-broadcast parity gap; flip when validator accepts dim=1) |
+| Broadcast-against-singleton          | `test_cache_and_edges.py::test_broadcast_against_singleton_batch_axis` (numpy-parity on a batch label) + `::test_broadcast_against_singleton_contract_axis` (broadcast on the contracted label) + `::test_broadcast_real_size_mismatch_still_rejected` (3≠5 still raises) + `::test_within_operand_size_mismatch_still_rejected` (`ii->` on (1,3) still raises — broadcast is cross-operand only) |
 | Integer-dtype bit-exact at K=256     | `test_cache_and_edges.py::test_int_bit_exact_at_k_256`                                                           |
 | `accum_dtype` validation surface     | `test_cache_and_edges.py::test_accum_dtype_validation`                                                           |
 | `deterministic` flag handshake       | `test_property.py::test_deterministic_bit_equality`                                                              |

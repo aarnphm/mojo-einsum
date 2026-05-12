@@ -36,6 +36,14 @@ pytestmark = pytest.mark.skipif(
     # permutation. Goes through `_reduce_out_labels` -> noop, then
     # `_permute_if_needed` flips axes. Untested before this row.
     ("ij->ji", [(3, 4)]),
+    # Size-1 broadcast on a batch label: (1, 3, 4) cij vs (5, 4, 6) cjk
+    # resolves `c` to 5. `_lower_pair` emits `ops.broadcast_to` before
+    # the matmul reshape; without it the reshape to `[5, m, k]` would
+    # fail because the permuted lhs still has a batch extent of 1.
+    ("cij,cjk->cik", [(1, 3, 4), (5, 4, 6)]),
+    # Size-1 broadcast on the contracted label: a[3,1] vs b[4,5] -> j
+    # resolves to 4. The contraction sum collapses to a[i,0]*sum_j b[j,k].
+    ("ij,jk->ik", [(3, 1), (4, 5)]),
   ],
 )
 def test_max_cpu_matches_numpy(eq: str, shapes: list[tuple[int, ...]]) -> None:

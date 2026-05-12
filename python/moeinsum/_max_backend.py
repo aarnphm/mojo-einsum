@@ -135,19 +135,50 @@ def _output_labels_for_pair(lhs: str, rhs: str, final_output: str, others: list[
   return "".join(dict.fromkeys(label for label in lhs + rhs if label in future))
 
 
+def _broadcast_if_needed(
+  value: TensorValue,
+  ordered_labels: str,
+  source_axis_sizes: dict[str, int],
+  resolved_sizes: dict[str, int],
+) -> TensorValue:
+  """Insert an `ops.broadcast_to` when the operand's per-axis sizes
+  differ from the resolved per-label sizes.
+
+  Permute alone gives us a tensor whose axes are in the right order
+  but whose extents still reflect this operand's original shape - if a
+  size-1 axis needs to broadcast against the other operand's size N,
+  the subsequent reshape into `(*B, m, k)` would fail. The check is
+  shape equality on the permuted view; only emit the op when broadcast
+  is actually required.
+  """
+  current_shape = [source_axis_sizes[label] for label in ordered_labels]
+  target_shape = [resolved_sizes[label] for label in ordered_labels]
+  if current_shape == target_shape:
+    return value
+  from max.graph import ops  # noqa: PLC0415
+
+  return ops.broadcast_to(value, target_shape)
+
+
 def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
   from max.graph import ops  # noqa: PLC0415
 
   _reject_repeated_labels(lhs.labels)
   _reject_repeated_labels(rhs.labels)
 
-  sizes = _label_sizes(lhs.labels, lhs.shape)
+  lhs_sizes = _label_sizes(lhs.labels, lhs.shape)
   rhs_sizes = _label_sizes(rhs.labels, rhs.shape)
+  sizes = dict(lhs_sizes)
   for label, dim in rhs_sizes.items():
     previous = sizes.get(label)
-    if previous is not None and previous != dim:
+    if previous is None or previous == dim:
+      sizes[label] = dim
+    elif previous == 1:
+      sizes[label] = dim
+    elif dim == 1:
+      continue
+    else:
       raise ValueError(f"size conflict on label {label!r}: {previous} vs {dim}")
-    sizes[label] = dim
 
   cls = _max_graph.classify_pair(lhs.labels, rhs.labels, out_labels)
   batch = "".join(cls.batch)
@@ -159,6 +190,8 @@ def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
   rhs_order = batch + contract + free_rhs
   lhs_value = _permute_if_needed(lhs.value, lhs.labels, lhs_order)
   rhs_value = _permute_if_needed(rhs.value, rhs.labels, rhs_order)
+  lhs_value = _broadcast_if_needed(lhs_value, lhs_order, lhs_sizes, sizes)
+  rhs_value = _broadcast_if_needed(rhs_value, rhs_order, rhs_sizes, sizes)
 
   batch_shape = _sizes_for(batch, sizes)
   m_shape = _sizes_for(free_lhs, sizes)

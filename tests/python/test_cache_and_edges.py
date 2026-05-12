@@ -180,38 +180,55 @@ def test_ellipsis_with_mismatched_implicit_rank() -> None:
   np.testing.assert_allclose(actual, expected, atol=1e-12)
 
 
-def test_broadcast_against_singleton() -> None:
-  """Strict per-label size matching: `(1, 3, 4) cij` vs `(5, 4, 6) cjk` is
-  rejected on label `c`. Numpy.einsum broadcasts this cleanly to `(5, 3, 6)`;
-  moeinsum chose strict equality to keep the planner's cost model honest -
-  broadcast hides the real reduction extent, so the FLOP estimate would lie.
-  See `test_broadcast_against_singleton_is_known_parity_gap` for the
-  xfail-pinned divergence and the path to fix it."""
-  rng = np.random.default_rng(0)
-  a = rng.standard_normal((1, 3, 4))
-  b = rng.standard_normal((5, 4, 6))
-  with pytest.raises(Exception, match="size mismatch"):
-    moeinsum.einsum("cij,cjk->cik", a, b)
+def test_broadcast_against_singleton_batch_axis() -> None:
+  """Per-label size-1 broadcast on a batch label.
 
-
-@pytest.mark.xfail(
-  reason="P5/P6 follow-up: numpy.einsum broadcasts size-1 axes per-label; "
-  "moeinsum rejects via the strict size check in reference.mojo:72. Fix is "
-  "(a) accept dim=1 vs dim=N as compatible in the validator and resolve to "
-  "max(dim, 1); (b) emit broadcast ops in the MAX-backend graph lowering. "
-  "Until then, callers must np.broadcast_to() before calling einsum.",
-  strict=True,
-)
-def test_broadcast_against_singleton_is_known_parity_gap() -> None:
-  """Pin the parity gap so the fix has an explicit failing test to flip
-  to passing. When this starts passing, drop the xfail and update
-  `test_broadcast_against_singleton` to assert the broadcasted result."""
+  `(1, 3, 4) cij` vs `(5, 4, 6) cjk` resolves `c` to 5 via numpy's
+  broadcast rule. Reference backend implements this via stride-0 on the
+  size-1 operand axis (`reference.mojo::_flat_offset`); MAX backend
+  emits an explicit `broadcast_to` before the matmul reshape
+  (`_max_backend.py::_lower_pair`). Either lowering reaches the same
+  `(5, 3, 6)` output."""
   rng = np.random.default_rng(0)
   a = rng.standard_normal((1, 3, 4))
   b = rng.standard_normal((5, 4, 6))
   expected = np.einsum("cij,cjk->cik", a, b)
   actual = moeinsum.einsum("cij,cjk->cik", a, b)
   np.testing.assert_allclose(actual, expected, atol=1e-9)
+
+
+def test_broadcast_against_singleton_contract_axis() -> None:
+  """Broadcast on the contracted label: `(3, 1) ij` vs `(4, 5) jk` resolves
+  `j` to 4. The contraction sum collapses to `a[i,0] * sum_j b[j,k]` -
+  one of the historical gotchas where library validators reject the
+  shape but numpy.einsum accepts it (matches `np.broadcast_shapes`)."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((3, 1))
+  b = rng.standard_normal((4, 5))
+  expected = np.einsum("ij,jk->ik", a, b)
+  actual = moeinsum.einsum("ij,jk->ik", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-9)
+
+
+def test_broadcast_real_size_mismatch_still_rejected() -> None:
+  """Broadcast is only triggered by dim=1; a (3, 4) vs (5, 4) mismatch
+  on the same label is still a real conflict and must raise."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((3, 4))
+  b = rng.standard_normal((5, 4))
+  with pytest.raises(Exception, match="size mismatch"):
+    moeinsum.einsum("ij,ij->", a, b)
+
+
+def test_within_operand_size_mismatch_still_rejected() -> None:
+  """Repeated labels within one operand stay strictly checked - `ii->`
+  on `(1, 3)` is a diagonal extraction over an axis that doesn't have
+  matching extents, which numpy itself rejects. Broadcast is a
+  cross-operand rule, not a within-operand one."""
+  rng = np.random.default_rng(0)
+  a = rng.standard_normal((1, 3))
+  with pytest.raises(Exception, match="size mismatch"):
+    moeinsum.einsum("ii->", a)
 
 
 def test_integer_bit_exact_reduction_large_k() -> None:
