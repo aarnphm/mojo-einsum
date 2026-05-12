@@ -231,6 +231,20 @@ def test_within_operand_size_mismatch_still_rejected() -> None:
     moeinsum.einsum("ii->", a)
 
 
+def test_repeated_label_with_cross_operand_broadcast() -> None:
+  """A label that is repeated within one operand (diagonal) AND
+  broadcasts cross-operand is one of the harder-to-reason cases - the
+  diagonal pass collapses (1, 1) to a size-1 axis, then the broadcast
+  pass lifts it to size N when the other operand has size N. Numpy
+  produces a non-trivial output; pin parity so a future broadcast
+  refactor can't accidentally regress this corner."""
+  a = np.ones((1, 1))  # 'ii' diagonal -> size-1 axis on label `i`
+  b = np.arange(12).reshape(3, 4).astype(float)  # 'ij' with i=3
+  expected = np.einsum("ii,ij->j", a, b)
+  actual = moeinsum.einsum("ii,ij->j", a, b)
+  np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
 def test_integer_bit_exact_reduction_large_k() -> None:
   """Integer matmul must be bit-exact for K up to a few hundred - no
   silent overflow into fp double precision."""

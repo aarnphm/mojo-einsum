@@ -83,13 +83,14 @@ Status: **blocked** on P11/P12 (`NativeOptimizedBackend`). Skeleton at `src/eins
 
 ## 7. Numerical sharp edges
 
-> Seven known gotchas: diagonal on non-contiguous, repeated index + broadcast, low-precision accumulation, ellipsis with mismatched rank, broadcast-against-singleton, fp32-accumulation for K > 64, integer-dtype bit-exact reduction.
+> Known numerical gotchas: diagonal on non-contiguous, ellipsis with mismatched rank, broadcast-against-singleton, repeated-index + broadcast, integer-dtype bit-exact reduction, `accum_dtype` validation, `deterministic` flag handshake, K > 64 bf16 / fp32-accum drift.
 
 | Gotcha                               | Test                                                                                                             |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | Diagonal on non-contiguous input     | `test_cache_and_edges.py::test_diagonal_on_non_contiguous`                                                       |
 | Ellipsis with mismatched rank prefix | `test_cache_and_edges.py::test_ellipsis_mismatched_prefix`                                                       |
 | Broadcast-against-singleton          | `test_cache_and_edges.py::test_broadcast_against_singleton_batch_axis` (numpy-parity on a batch label) + `::test_broadcast_against_singleton_contract_axis` (broadcast on the contracted label) + `::test_broadcast_real_size_mismatch_still_rejected` (3≠5 still raises) + `::test_within_operand_size_mismatch_still_rejected` (`ii->` on (1,3) still raises — broadcast is cross-operand only) |
+| Repeated index + broadcast           | `test_cache_and_edges.py::test_repeated_label_with_cross_operand_broadcast` (`ii,ij->j` with `(1,1)`/`(3,4)` - diagonal-extract collapses to size 1 on `i`, then cross-operand broadcast lifts it to 3) |
 | Integer-dtype bit-exact at K=256     | `test_cache_and_edges.py::test_int_bit_exact_at_k_256`                                                           |
 | `accum_dtype` validation surface     | `test_cache_and_edges.py::test_accum_dtype_validation`                                                           |
 | `deterministic` flag handshake       | `test_property.py::test_deterministic_bit_equality`                                                              |
