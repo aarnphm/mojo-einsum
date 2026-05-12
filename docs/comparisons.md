@@ -10,6 +10,7 @@ date: 2026/05/10
 | Equation grammar             | done                | done                   | done                  | done                  | done (C API)    | done (C API)     |
 | Implicit output              | done                | done                   | done                  | done                  | n/a           | n/a            |
 | Ellipsis broadcasting        | done                | done                   | done                  | done                  | n/a           | n/a            |
+| Size-1 per-label broadcast   | done                | done                   | done                  | done                  | n/a           | n/a            |
 | Trace / diagonal             | done                | done                   | done                  | done                  | n/a           | partial        |
 | Multi-operand paths          | done                | needs `optimize=`    | auto (opt_einsum)   | auto (opt_einsum)   | single-step   | single-step    |
 | `greedy`                     | done                | done                   | via opt_einsum      | via opt_einsum      | n/a           | n/a            |
