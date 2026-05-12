@@ -44,6 +44,12 @@ pytestmark = pytest.mark.skipif(
     # Size-1 broadcast on the contracted label: a[3,1] vs b[4,5] -> j
     # resolves to 4. The contraction sum collapses to a[i,0]*sum_j b[j,k].
     ("ij,jk->ik", [(3, 1), (4, 5)]),
+    # Ellipsis expansion is Python-owned in the executable MAX backend
+    # until the Mojo graph spec grows the same shape-dependent rewrite.
+    ("...ij,jk->...ik", [(2, 3, 4), (4, 5)]),
+    ("...ij,...jk->...ik", [(2, 3, 4, 5), (3, 5, 6)]),
+    ("ij...,jk...->ik...", [(2, 3, 5, 1), (3, 4, 5, 1)]),
+    ("...ij,...jk", [(7, 2, 3), (7, 3, 4)]),
   ],
 )
 def test_max_cpu_matches_numpy(eq: str, shapes: list[tuple[int, ...]]) -> None:
@@ -86,9 +92,7 @@ def test_max_backend_model_cache_reuses_compiled_graph() -> None:
   moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
   after_second = len(_max_backend._MODEL_CACHE)
 
-  assert after_first == before + 1, (
-    f"first call should add exactly one cache entry, grew by {after_first - before}"
-  )
+  assert after_first == before + 1, f"first call should add exactly one cache entry, grew by {after_first - before}"
   assert after_second == after_first, (
     f"second call with identical signature should hit the cache; "
     f"grew from {after_first} to {after_second} — key has drifted"
@@ -157,9 +161,7 @@ def test_max_backend_model_cache_lru_evicts_at_max() -> None:
       b = rng.standard_normal((cols, 2)).astype(np.float32)
       moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
 
-    assert len(_max_backend._MODEL_CACHE) == 3, (
-      f"LRU should cap at 3, got {len(_max_backend._MODEL_CACHE)}"
-    )
+    assert len(_max_backend._MODEL_CACHE) == 3, f"LRU should cap at 3, got {len(_max_backend._MODEL_CACHE)}"
     # Oldest key was the (3,4)x(4,2) compile - it should have been
     # evicted; the remaining three are (3,5), (3,6), (3,7).
     surviving_shapes = {key[1] for key in _max_backend._MODEL_CACHE}

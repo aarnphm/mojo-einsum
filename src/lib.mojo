@@ -1,14 +1,15 @@
 """Entrypoint for `moeinsum._native`.
 
-Exposed callables (consumed by the Python wrapper):
-  - `parse_equation(eq: str) -> dict`
-        Returns the parsed equation as a dict for debugging.
-  - `einsum_reference(eq, operands_flat, operand_shapes) -> (flat_out, out_shape)`
-        Reference backend: row-major flat lists in, row-major flat list out.
-  - `einsum_path(eq, operand_shapes) -> list[tuple[int, ...]]`
-        Path chosen by the naive (P1) plan builder.
-  - `einsum_compute_path(eq, operand_shapes, algorithm) -> list[tuple[int, int]]`
-        Path chosen by the named optimizer.
+Exposed callables consumed by the Python wrapper:
+  - `parse_equation(eq: str) -> dict`, for IR/debug introspection.
+  - `einsum_reference(eq, operands_flat, operand_shapes) -> (flat_out, shape)`,
+    the row-major flat-list reference backend.
+  - `einsum_path(eq, operand_shapes) -> list[tuple[int, ...]]`, the naive
+    left-to-right plan builder path.
+  - `einsum_compute_path(eq, operand_shapes, algorithm) -> list[tuple[int, int]]`,
+    the named path optimizer.
+  - `max_graph_spec(eq, operand_shapes, path) -> dict`, the Mojo-owned
+    plan-to-graph description used by MAX debug/lowering tools.
 """
 
 from std.os import abort
@@ -252,8 +253,8 @@ def einsum_reference_py(
             )
         )
 
-    # Copy each operand into a Mojo-var Float64 buffer (zero-copy
-    # DLPack path is P8 work).
+    # Copy each operand into a Mojo-owned Float64 buffer. Zero-copy DLPack is
+    # later FFI work.
     var data_ptrs = List[UnsafePointer[Float64, MutAnyOrigin]]()
     var strides_list = List[List[Int]]()
     for op_idx in range(eq.n_operands()):
@@ -464,9 +465,9 @@ def max_graph_spec_py(
 ) raises -> PythonObject:
     """Return the MAX Graph op spec for `(eq, shapes, path)`.
 
-    Python still owns the actual `max.graph.Graph` object construction because
-    that compiler API is Python-facing. The contraction semantics live here:
-    parsing, working-set path semantics, diagonal/reduce detection, and B/K/M/N
+    Python still owns actual `max.graph.Graph` object construction because that
+    compiler API is Python-facing. The contraction semantics live here: parsing,
+    working-set path semantics, diagonal/reduce detection, and B/K/M/N
     classification all route through the Mojo IR.
     """
     var eq_str = String(py=eq_obj)
@@ -617,10 +618,10 @@ def einsum_compute_path_py(
 ) raises -> PythonObject:
     """Run `path.mojo`'s named algorithm and return its pair sequence.
 
-    `algorithm in {"greedy", "optimal", "auto", "naive"}`. Output is a
-    list of `(lhs_idx, rhs_idx)` tuples - pairwise-only, no unary
-    singletons (single-operand contractions go through `einsum_path`
-    which uses `build_naive_plan`).
+    Supported algorithms match `compute_path`: greedy, optimal, auto, naive,
+    branch-all, branch-2, branch-1, random-greedy, and random-greedy-N. Output is
+    a list of `(lhs_idx, rhs_idx)` tuples, pairwise-only. Single-operand
+    contractions go through `einsum_path`, which uses `build_naive_plan`.
     """
     var eq_str = String(py=eq_obj)
     var algorithm = String(py=algorithm_obj)

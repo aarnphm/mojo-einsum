@@ -185,6 +185,23 @@ def test_module_entry_cache_bench() -> None:
   assert rec["cache_speedup_ratio"] > 0
 
 
+def test_module_entry_records_modular_debug_shortcuts() -> None:
+  args = _bench_args(
+    "ij,jk->ik",
+    ["3,4", "4,5"],
+    modular_debug="source-tracebacks",
+    max_ir_output_dir="/tmp/moeinsum-ir",
+    max_op_log_level="trace",
+  )
+  proc = _run(_python(), "-m", "moeinsum.bench", *args)
+  assert proc.returncode == 0, f"stderr: {proc.stderr}"
+  rec = _parse_json(proc.stdout)
+  assert "source-tracebacks" in rec["modular_debug"]
+  assert "ir-output-dir=/tmp/moeinsum-ir" in rec["modular_debug"]
+  assert "op-log-level=trace" in rec["modular_debug"]
+  assert rec["max_ir_output_dir"] == "/tmp/moeinsum-ir"
+
+
 def test_module_entry_random_greedy_n() -> None:
   args = _bench_args("ij,jk,kl->il", ["3,4", "4,5", "5,6"], optimize="random-greedy-16")
   proc = _run(_python(), "-m", "moeinsum.bench", *args)

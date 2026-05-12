@@ -1,36 +1,26 @@
 """`MaxGraphBackend` - lifts a contraction plan to a MAX graph.
 
-P14 stretch deliverable. The default `reference` backend executes each
-plan step eagerly with a global-index reduction loop; `MaxGraphBackend`
-instead assembles the entire plan as a `max.graph.Graph`, hands it to
-MAX's compiler, and lets MAX fuse - including any elementwise ops the
-caller composes around the einsum - into one kernel.
+The reference backend executes each plan step eagerly with a global-index
+reduction loop. `MaxGraphBackend` instead builds a graph-shaped description of
+the whole plan, so MAX can eventually own fusion across the full contraction.
 
 The plan-to-graph translation is owned by the Mojo `_native` extension:
-parsing, working-set semantics, unary detection, and B/K/M/N
-classification all come from the same IR as the reference backend.
-The actual `max.graph` import is lazy: when the package isn't
-installed, `MaxGraphBackend()` raises a precise `ImportError`, but
-`plan_to_graph_spec(...)` still returns the abstract plan description
-so callers can inspect what *would* be emitted. Tests that need the
-runtime call `require_max_graph()` and skip when it's missing.
+parsing, working-set semantics, unary detection, and B/K/M/N classification all
+come from the same IR as the reference backend. The actual `max.graph` import is
+lazy: when the package is missing, `MaxGraphBackend()` raises a precise
+`ImportError`, but `plan_to_graph_spec(...)` still returns the abstract plan
+description so callers can inspect what would be emitted.
 
-The translation per plan step (mirrors JAX's algorithm at
-`jax/_src/numpy/lax_numpy.py:3264-3293`):
+Per contraction step this mirrors JAX's lowering shape:
 
-  Classify dims into B / K / M / N buckets:
-    - B: batch - appears in lhs, rhs, and output
-    - K: contract - appears in lhs and rhs, not in output
-    - M: free-left - in lhs and output only
-    - N: free-right - in rhs and output only
+  - classify axes into B/K/M/N buckets,
+  - permute lhs to `(*B, *M, *K)` and rhs to `(*B, *K, *N)`,
+  - issue matmul to produce `(*B, *M, *N)`,
+  - permute back to the equation's stated output order.
 
-  Permute lhs to `(*B, *M, *K)` and rhs to `(*B, *K, *N)`.
-  Issue `matmul` -> result has shape `(*B, *M, *N)`.
-  Permute back to the equation's stated output order.
-
-Unary steps (trace, diagonal, axis-sum, transpose) are emitted in the
-spec. The current executable MAX path supports axis sums and
-transposes; diagonal extraction is still a reference-backend case.
+Unary steps (trace, diagonal, axis-sum, transpose) are emitted in the spec. The
+current executable MAX path supports the BMM-lowerable subset; diagonal
+extraction remains a reference-backend case.
 """
 
 from __future__ import annotations
@@ -46,9 +36,9 @@ import numpy as np
 def is_available() -> bool:
   """Return True when the `max.graph` Python package is importable.
 
-  `importlib.util.find_spec("max.graph")` raises ModuleNotFoundError
-  when the parent `max` package is missing (Python >=3.4 quirk), so we
-  swallow that and return False.
+  `importlib.util.find_spec("max.graph")` raises `ModuleNotFoundError` when the
+  parent `max` package is missing, so this normalizes that Python import quirk
+  into False.
   """
   try:
     return importlib.util.find_spec("max.graph") is not None
@@ -57,16 +47,12 @@ def is_available() -> bool:
 
 
 def is_loadable() -> bool:
-  """Return True when `max._core` actually loads in this process.
+  """Return True when `max._core` imports successfully in this process.
 
-  Stricter than [is_available]: the install may exist on disk but fail
-  at dlopen() time. Concrete failure mode we hit in dev: this repo's
-  `_native.so` rpaths into `~/workspace/modular/bazel-bin/_solib_*`,
-  whose `libAsyncRTRuntimeGlobals.dylib` install_name collides with
-  the PyPI `max` wheel's bundled copy. If the two are ABI-incompatible
-  the first one in wins and the other's symbol lookups fail. Test
-  markers should gate on this rather than [is_available] so they skip
-  cleanly instead of hard-erroring on a dev box.
+  Stricter than `is_available`: a local install can exist on disk but fail at
+  dlopen time. The concrete dev failure this guards is rpath collision between
+  this repo's editable `_native.so` and the PyPI `max` wheel. Test markers should
+  gate on this helper so they skip cleanly instead of crashing import.
   """
   if not is_available():
     return False
@@ -97,11 +83,9 @@ def require_max_graph() -> object:
 class DimClassification:
   """The B/K/M/N split for a single pairwise contraction step.
 
-  Each list holds *label characters* (single-char strings) in the order
-  they appear in the source operand. ``batch`` is intentionally the
-  intersection-in-order on lhs; the per-axis index in rhs may differ
-  and is recorded in `rhs_batch_perm` so reshape-only paths can still
-  go through.
+  Each tuple holds label characters in the source operand order. `batch` is
+  intentionally lhs-order; rhs can place the same batch labels elsewhere, and
+  the downstream layout step is responsible for that permutation.
   """
 
   lhs_labels: str
@@ -117,10 +101,10 @@ class DimClassification:
 class GraphSpec:
   """An abstract description of what `plan_to_graph(...)` would emit.
 
-  Each entry is a `(op_kind, payload)` pair. `op_kind` is a string  -
-  `"matmul"`, `"transpose"`, `"reduce_sum"`, `"diagonal"`. The payload
-  is a dict whose schema depends on the op_kind. This keeps the spec
-  hashable / testable / serializable without depending on max.graph.
+  Each entry is a `(op_kind, payload)` pair. `op_kind` is a string like
+  `"matmul"`, `"transpose"`, `"reduce_sum"`, or `"diagonal"`. The payload schema
+  depends on the op kind. This keeps the spec testable and serializable without
+  depending on `max.graph`.
   """
 
   ops: list[tuple[str, dict[str, object]]] = field(default_factory=list)
@@ -180,24 +164,22 @@ def plan_to_graph_spec(
 ) -> GraphSpec:
   """Translate `(eq, shapes, path)` into an op-by-op `GraphSpec`.
 
-  This is the spec a real `max.graph` lowering would consume - each
-  entry is the kind + parameters of a single graph op. Independent of
-  `max.graph` itself; tests can validate the structure without the
-  package installed.
+  This is the spec a real `max.graph` lowering would consume. It is independent
+  of `max.graph` itself, so tests and debug tools can validate lowering shape
+  without the runtime package installed.
 
-  Limitations matching v0.1 scope:
-    - no ellipsis (raises)
-    - repeated labels within one operand (trace/diag) are emitted as
-      a `"diagonal"` unary step
-    - unary steps in `path` are passed through; reduce-out labels
-      become `"reduce_sum"` ops
+  Current limitations:
+    - no ellipsis,
+    - repeated labels within one operand emit a `"diagonal"` unary step,
+    - unary path steps are passed through, and reduce-out labels become
+      `"reduce_sum"` ops.
   """
   from . import _native  # noqa: PLC0415
 
   # Mojo raises `Error` which the std.python bindings surface as a bare
   # `Exception` (not RuntimeError). Catch broadly and re-raise the one
-  # user-actionable subset (ellipsis) as ValueError so callers can pin a
-  # narrow except clause.
+  # user-actionable subset (ellipsis) as ValueError so callers can pin a narrow
+  # except clause.
   try:
     raw = _native.max_graph_spec(eq, shapes, path)
   except Exception as exc:
@@ -225,14 +207,13 @@ def plan_to_graph_spec(
 class MaxGraphBackend:
   """Lifts a `(eq, shapes, path)` triple to a MAX graph and executes it.
 
-  `__init__()` validates that `max.graph` is importable. Per-call
-  execution is `execute(eq, shapes, path, operands)` - the same
-  signature any future native backend will land on.
+  `__init__()` validates that `max.graph` is importable. Per-call execution is
+  `execute(eq, shapes, path, operands)`, the same signature future native
+  backends should share.
 
-  v0.1 status: executable for the same BMM-lowerable subset as
-  `backend="max"`. The plan-to-graph translation
-  (`plan_to_graph_spec`) is Mojo-owned and tested; the actual graph
-  object construction still uses MAX's Python API.
+  v0.1 status: executable for the same BMM-lowerable subset as `backend="max"`.
+  The plan-to-graph translation (`plan_to_graph_spec`) is Mojo-owned and tested;
+  graph object construction still uses MAX's Python API.
   """
 
   def __init__(self) -> None:

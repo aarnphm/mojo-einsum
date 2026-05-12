@@ -1,55 +1,41 @@
-"""MAX-kernels backend (skeleton).
+"""MAX-kernels backend skeleton.
 
-Consumes a `ContractionPlan` and dispatches each step to MAX's kernel
-library - `linalg.batched_matmul` for two-operand BMM-lowered steps, and
-the unary kernels from `einsum.unary` for single-operand steps. This is
-the *default* backend for the public API; it inherits CPU, SM90, SM100,
-and Apple-Silicon dispatch from MAX, so we don't write platform-specific
-code at this layer.
+Consumes a `ContractionPlan` and dispatches each step to MAX's kernel library:
+`linalg.batched_matmul` for two-operand BMM-lowered steps, and the unary kernels
+from `einsum.unary` for single-operand steps. This backend should inherit CPU,
+SM90, SM100, and Apple-Silicon dispatch from MAX, so we do not write
+platform-specific kernels at this layer.
 
-The plumbing currently isn't wired into the FFI - `src/lib.mojo` still
-passes flat-list operands to the reference backend. The Phase 5 work
-that unblocks this:
+The plumbing currently is not wired into the FFI. `src/lib.mojo` still passes
+flat-list operands to the reference backend. The Phase 5 work that unblocks this:
 
-  1. FFI accepts numpy ndarray buffers and constructs `TileTensor` views
-     over them (using `RuntimeLayout` when shapes are runtime-only).
-  2. Each plan step's pairwise lowering builds `Layout` compositions to
-     produce zero-copy `(*B, *M, *K)` / `(*B, *K, *N)` views of the
-     operands.
+  1. FFI accepts numpy ndarray buffers and constructs `TileTensor` views over
+     them, using `RuntimeLayout` when shapes are runtime-only.
+  2. Each pairwise step builds `Layout` compositions to produce zero-copy
+     `(*B, *M, *K)` / `(*B, *K, *N)` views of the operands.
   3. `linalg.batched_matmul[transpose_b=...](c, a, b, ctx)` runs the
      contraction.
   4. The output is permuted via `out_permutation` to `out_labels` order.
 
-For `all_dims_known=False` operands (the common DLPack case), we fall
-back to TTGT - materialize the permutation into a fresh
-`OwnedPointer`-allocated buffer before the matmul. The native backend's
-GETT path (Phase 11/12) avoids this materialization.
+For `all_dims_known=False` operands, the common DLPack case, we fall back to
+TTGT: materialize the permutation into a fresh buffer before matmul. The native
+backend's GETT path avoids this materialization.
 
-This file is intentionally a structural skeleton: the function shapes,
-the dispatch logic, and the comments are correct, but the kernel calls
-are stubbed until the FFI side is upgraded. See `docs/derivations.md`
-Section 1 for the BMM-lowering math, Section 3 for GETT, Section 6 for output-permutation
-choice.
+This file is intentionally structural: the function shape, dispatch seam, and
+lowering notes are correct, but the kernel calls are stubbed until the FFI side
+is upgraded. See `docs/derivations.md` Sections 1, 3, and 6 for the BMM
+lowering math, GETT notes, and output-permutation choice.
 """
 
 from std.memory import UnsafePointer
 
-from einsum.parse import EinsumEquation
-from einsum.plan import (
-    ContractionPlan,
-    PlanStep,
-    UnaryStep,
-    PairwiseStep,
-    UNARY_REDUCE_SUM,
-    UNARY_DIAGONAL,
-    UNARY_TRACE,
-    UNARY_TRANSPOSE,
-)
+from einsum.plan import ContractionPlan
 
 
 # ---------------------------------------------------------------------
 # Backend entry point
 # ---------------------------------------------------------------------
+
 
 def execute_max(
     plan: ContractionPlan,
@@ -60,17 +46,14 @@ def execute_max(
     out_shape: List[Int],
     out_strides: List[Int],
 ) raises:
-    """Execute `plan` against the operands, writing the result into
-    `out_ptr`.
+    """Execute `plan` against the operands, writing the result into `out_ptr`.
 
-    Working-set semantics matches `build_naive_plan`: each pairwise step
-    consumes two operands and appends the result; each unary step
-    replaces its operand in place. The final working-set element is the
-    overall result, which we write into `out_ptr`.
+    Working-set semantics matches `build_naive_plan`: each pairwise step consumes
+    two operands and appends the result; each unary step replaces its operand in
+    place. The final working-set element is written into `out_ptr`.
 
-    For v0.1 the backend is a structural stub - it routes to the
-    reference backend for now. The MAX-kernel dispatch lands when the
-    FFI accepts TileTensor handles (Phase 5).
+    v0.1 status: structural stub. MAX-kernel dispatch lands when the FFI accepts
+    TileTensor handles.
     """
     raise Error(
         String(
@@ -107,14 +90,14 @@ def execute_max(
 #     #        transpose_b=False,
 #     #    ](out_bmm_view, lhs_view, rhs_view, ctx)
 #     #
-#     # 4. If step.out_permutation is non-identity, transpose
-#     #    out_bmm_view into out_tile via copy. Otherwise the BMM result
-#     #    is already in the right layout.
+#     # 4. If step.out_permutation is non-identity, transpose out_bmm_view into
+#     #    out_tile via copy. Otherwise the BMM result is already in the right
+#     #    layout.
 #     #
-#     # Note: JAX's trick (lax_numpy.py:3288-3300) of trying both
-#     # (lhs, rhs) and (rhs, lhs) orderings to avoid the output permute
-#     # is a one-line optimization here - check whether the BMM-natural
-#     # order matches out_labels, and if not, retry with swapped operands.
+#     # Note: JAX's trick of trying both (lhs, rhs) and (rhs, lhs) orderings to
+#     # avoid the output permute is a one-branch optimization here: check whether
+#     # the BMM-natural order matches out_labels, and if not, retry with swapped
+#     # operands.
 
 
 # ---------------------------------------------------------------------
@@ -128,8 +111,8 @@ def execute_max(
 #     in_tile: TileTensor[...],
 #     out_tile: TileTensor[mut=True, ...],
 # ) raises:
-#     # Compose layout-only transformations where possible, materialize
-#     # only when we hit a reduction.
+#     # Compose layout-only transformations where possible, materialize only when
+#     # we hit a reduction.
 #     if step.kind == UNARY_TRANSPOSE:
 #         # Pure layout permutation - write metadata, no copy.
 #         transpose_view(...)
@@ -141,7 +124,7 @@ def execute_max(
 #         reduce_sum_axes(in_buf, in_shape, in_strides, step.reduce_axes,
 #                         out_buf, out_strides)
 #     elif step.kind == UNARY_TRACE:
-#         # Compose diagonal_view -> reduce_sum_axes (NumPy's pattern).
+#         # Compose diagonal_view -> reduce_sum_axes, following NumPy's pattern.
 #         var mid_shape = List[Int]()
 #         var mid_strides = List[Int]()
 #         diagonal_view(in_shape, in_strides, step.diag_axes,

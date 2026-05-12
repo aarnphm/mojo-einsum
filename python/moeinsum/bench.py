@@ -4,19 +4,22 @@ Emits per-step timing as JSON. Runs each measurement N times, reports
 the median (robust to GC pauses), min, and max.
 
 Single-optimizer mode (default):
+
   moeinsum-bench "ij,jk->ik" --shapes 256,256 256,256
   moeinsum-bench "ij,jk,kl->il" --shapes 64,64 64,64 64,64 \\
       --optimize auto --repeats 100
 
 Optimizer-sweep mode (`--sweep-optimizers`): runs every named optimizer
-in `_OPTIMIZE` against the same operands and emits a ratios table
-(median time vs. fastest):
+against the same operands and emits a ratios table (median time vs.
+fastest):
+
   moeinsum-bench "ij,jk,kl,lm->im" --shapes 8,4 4,16 16,2 2,32 \\
       --sweep-optimizers
 
 Comparison mode (`--compare`): times moeinsum plus installed comparison
 engines (`numpy`, `opt_einsum`, `jax`, `torch`, `mlx`). Missing engines
 are recorded as skipped instead of failing the primary bench.
+
   moeinsum-bench "ij,jk->ik" --shapes 1024,1024 1024,1024 --compare
 
 Output JSON (single-optimizer):
@@ -59,9 +62,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-# Set the libpython link before `moeinsum` imports `_native` and triggers
-# the mohaus editable rebuild. uv-managed interpreters live outside the
-# loader's default search path, so the rebuild fails without this.
+# Set the libpython link before `moeinsum` imports `_native` and triggers the
+# mohaus editable rebuild. uv-managed interpreters live outside the loader's
+# default search path, so the rebuild fails without this.
 if "MOJO_PYTHON_LIBRARY" not in os.environ:
   _libdir = sysconfig.get_config_var("LIBDIR")
   _libname = sysconfig.get_config_var("LDLIBRARY")
@@ -97,6 +100,7 @@ _COMPARE_ENGINE_ALIASES = {
   "pytorch": "torch",
   "mlx": "mlx",
 }
+_MAX_OP_LOG_LEVELS = ("notset", "trace", "debug", "info", "warning", "error", "critical")
 
 
 def _parse_shapes(shape_strs: list[str]) -> list[tuple[int, ...]]:
@@ -163,6 +167,70 @@ def _parse_compare_engines(raw: str) -> list[str]:
   if not out:
     raise ValueError("--compare-engines must name at least one engine")
   return out
+
+
+def _configure_modular_debug(
+  *,
+  modular_debug: str | None,
+  max_ir_output_dir: str | None,
+  max_op_log_level: str | None,
+  max_source_tracebacks: bool,
+  max_device_sync: bool,
+  max_nan_check: bool,
+) -> str | None:
+  tokens: list[str] = []
+  if modular_debug:
+    tokens.extend(part.strip() for part in modular_debug.split(",") if part.strip())
+  if max_ir_output_dir:
+    tokens.append(f"ir-output-dir={max_ir_output_dir}")
+  if max_op_log_level:
+    tokens.append(f"op-log-level={max_op_log_level}")
+  if max_source_tracebacks:
+    tokens.append("source-tracebacks")
+  if max_device_sync:
+    tokens.append("device-sync-mode")
+  if max_nan_check:
+    tokens.append("nan-check")
+  if not tokens:
+    return os.environ.get("MODULAR_DEBUG") or None
+
+  existing = os.environ.get("MODULAR_DEBUG", "").strip()
+  merged = ",".join([existing, *tokens] if existing else tokens)
+  os.environ["MODULAR_DEBUG"] = merged
+  return merged
+
+
+def _apply_max_debug_api(
+  *,
+  max_ir_output_dir: str | None,
+  max_op_log_level: str | None,
+  max_source_tracebacks: bool,
+  max_device_sync: bool,
+  max_nan_check: bool,
+) -> None:
+  if max_source_tracebacks:
+    from max.graph import Graph  # noqa: PLC0415
+
+    graph_debug = getattr(Graph, "debug", None)
+    if graph_debug is not None:
+      graph_debug.source_tracebacks = True
+
+  if not any((max_ir_output_dir, max_op_log_level, max_device_sync, max_nan_check)):
+    return
+
+  from max.engine import InferenceSession  # noqa: PLC0415
+
+  debug = getattr(InferenceSession, "debug", None)
+  if debug is None:
+    return
+  if max_ir_output_dir:
+    debug.ir_output_dir = max_ir_output_dir
+  if max_op_log_level:
+    debug.op_log_level = max_op_log_level
+  if max_device_sync:
+    debug.device_sync_mode = True
+  if max_nan_check:
+    debug.nan_check = True
 
 
 def _time_callable(
@@ -339,6 +407,37 @@ def main(argv: list[str] | None = None) -> int:
     help="Execution backend",
   )
   p.add_argument(
+    "--modular-debug",
+    help=(
+      "Comma-separated MODULAR_DEBUG tokens to set before MAX loads. "
+      "Example: ir-output-dir=.max-ir,op-log-level=trace,source-tracebacks"
+    ),
+  )
+  p.add_argument(
+    "--max-ir-output-dir",
+    help="Shortcut for MODULAR_DEBUG=ir-output-dir=<dir>; dumps MAX compiler IR during graph compile.",
+  )
+  p.add_argument(
+    "--max-op-log-level",
+    choices=_MAX_OP_LOG_LEVELS,
+    help="Shortcut for MODULAR_DEBUG=op-log-level=<level>; trace logs each MAX op launch/complete.",
+  )
+  p.add_argument(
+    "--max-source-tracebacks",
+    action="store_true",
+    help="Shortcut for MODULAR_DEBUG=source-tracebacks.",
+  )
+  p.add_argument(
+    "--max-device-sync",
+    action="store_true",
+    help="Shortcut for MODULAR_DEBUG=device-sync-mode; useful for GPU error localization.",
+  )
+  p.add_argument(
+    "--max-nan-check",
+    action="store_true",
+    help="Shortcut for MODULAR_DEBUG=nan-check.",
+  )
+  p.add_argument(
     "--optimize",
     default="auto",
     help=("Path optimizer: naive / greedy / optimal / auto / random-greedy / random-greedy-N / branch-{all,2,1}"),
@@ -390,11 +489,8 @@ def main(argv: list[str] | None = None) -> int:
     "--cache-bench",
     action="store_true",
     help=(
-      "Pin plan Section 3 ('hot-path latency dominated by backend execute()') "
-      "numerically. Clears PLAN_CACHE, times one cold call, then "
-      "--repeats hot calls; emits cold_ms, hot_ms_median, "
-      "cache_speedup_ratio. Hot/cold ratio < 1 means the JIT cache "
-      "isn't saving anything - investigate."
+      "Clear PLAN_CACHE, time one cold call, then time --repeats hot calls. "
+      "Emits cold_ms, hot_ms_median, and cache_speedup_ratio."
     ),
   )
   progress = p.add_mutually_exclusive_group()
@@ -417,6 +513,14 @@ def main(argv: list[str] | None = None) -> int:
   if args.warmup < 0:
     p.error("--warmup must be >= 0")
 
+  modular_debug = _configure_modular_debug(
+    modular_debug=args.modular_debug,
+    max_ir_output_dir=args.max_ir_output_dir,
+    max_op_log_level=args.max_op_log_level,
+    max_source_tracebacks=args.max_source_tracebacks,
+    max_device_sync=args.max_device_sync,
+    max_nan_check=args.max_nan_check,
+  )
   show_progress = sys.stderr.isatty() if args.progress is None else args.progress
   if show_progress and _tqdm is None:
     p.error("progress output requires tqdm; run with `uv run --group bench moeinsum-bench ...`")
@@ -424,8 +528,15 @@ def main(argv: list[str] | None = None) -> int:
     p.error(
       f"--backend {args.backend!r} requested but the `max` runtime did not load. "
       "Install with `uv pip install -e '.[max]'` and ensure `python -c \"import max._core\"` "
-      "succeeds (a bazel-cache vs PyPI ABI fork on libAsyncRTRuntimeGlobals.dylib is the "
-      "usual cause locally - see python/moeinsum/_max_graph.py::is_loadable)."
+      "succeeds."
+    )
+  if args.backend.startswith("max"):
+    _apply_max_debug_api(
+      max_ir_output_dir=args.max_ir_output_dir,
+      max_op_log_level=args.max_op_log_level,
+      max_source_tracebacks=args.max_source_tracebacks,
+      max_device_sync=args.max_device_sync,
+      max_nan_check=args.max_nan_check,
     )
   if args.compare_engines is not None:
     try:
@@ -456,9 +567,9 @@ def main(argv: list[str] | None = None) -> int:
   }
 
   if args.sweep_optimizers:
-    # Cover every named optimizer the path planner exposes. `random-greedy`
-    # is the default-N variant; callers wanting `random-greedy-N` specific
-    # trial counts should run single-optimizer mode with `--optimize`.
+    # Cover every named optimizer the path planner exposes. `random-greedy` is
+    # the default-N variant; callers wanting `random-greedy-N` specific trial
+    # counts should run single-optimizer mode with `--optimize`.
     optimizers = (
       "naive",
       "greedy",
@@ -488,6 +599,7 @@ def main(argv: list[str] | None = None) -> int:
       }
     fastest_name = min(per_opt_medians, key=lambda k: per_opt_medians[k])
     fastest = per_opt_medians[fastest_name]
+    # Round ratios to 3dp; anything past that is noise on perf_counter timings.
     ratios = {name: round(ms / fastest, 3) for name, ms in per_opt_medians.items()}
     result = {
       "equation": args.equation,
@@ -502,6 +614,10 @@ def main(argv: list[str] | None = None) -> int:
       "platform": platform_record,
       "timestamp": datetime.now(UTC).isoformat(),
     }
+    if modular_debug is not None:
+      result["modular_debug"] = modular_debug
+    if args.max_ir_output_dir:
+      result["max_ir_output_dir"] = args.max_ir_output_dir
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
@@ -528,21 +644,25 @@ def main(argv: list[str] | None = None) -> int:
     "platform": platform_record,
     "timestamp": datetime.now(UTC).isoformat(),
   }
+  if modular_debug is not None:
+    result["modular_debug"] = modular_debug
+  if args.max_ir_output_dir:
+    result["max_ir_output_dir"] = args.max_ir_output_dir
   if args.include_path:
     result["path"] = einsum_path(args.equation, *shapes, optimize=args.optimize)
 
   if args.cache_bench:
-    # Cold call: empty the cache, time one un-cached execution. The
-    # cold path pays parse + plan + path optimize + reference loop.
     PLAN_CACHE.clear()
+    # Cold call: empty the cache, time one un-cached execution. The cold path
+    # pays parse + plan + path optimize + reference loop.
     t0 = time.perf_counter()
     einsum(args.equation, *operands, backend=args.backend, optimize=args.optimize)
     t1 = time.perf_counter()
     cold_ms = (t1 - t0) * 1000.0
 
-    # Hot calls: cache is now populated. Subsequent invocations skip
-    # parse + plan and go straight to the kernel.
     hot_timings: list[float] = []
+    # Hot calls: cache is now populated. Subsequent invocations skip parse +
+    # plan and go straight to the kernel.
     for _ in _progress_range(args.repeats, desc="cache-bench hot", enabled=show_progress):
       hot_timings.append(_time_one(args.equation, operands, args.backend, args.optimize))
     hot_median = statistics.median(hot_timings)
@@ -550,7 +670,6 @@ def main(argv: list[str] | None = None) -> int:
     result["hot_ms_median"] = hot_median
     result["hot_ms_min"] = min(hot_timings)
     result["hot_ms_max"] = max(hot_timings)
-    # Round to 3dp - anything past that is noise on perf_counter.
     result["cache_speedup_ratio"] = round(cold_ms / hot_median, 3) if hot_median > 0 else 0.0
 
   if compare_engines:

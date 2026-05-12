@@ -110,7 +110,7 @@ Bellman's matrix-chain example shows why the choice matters by orders of magnitu
 
 200x in FLOPs, $10^7$x in peak intermediate memory.[^moe] Path selection is its own optimization problem; moeinsum implements `opt_einsum`'s family natively (`greedy`, `optimal`, `random-greedy`, `branch`, `auto`). Algorithms in `derivations.md`.
 
-[^moe]: This shape pattern shows up in MoE routing - a wide ephemeral activation between two narrow projections - which is why the chain matters in practice and not just in textbooks.
+[^moe]: This shape pattern shows up in MoE routing: a wide ephemeral activation between two narrow projections.
 
 ## Ellipsis: broadcasting across unknown ranks
 
@@ -161,7 +161,7 @@ out = np.einsum("bhqk,bhkv->bhqv", weights, V)
 
 `b` and `h` batch, `k` contracts, `q` free-left, `v` free-right.
 
-Two einsums and a softmax. The PyTorch source for the same block runs forty lines.
+Two einsums and a softmax.
 
 ## IR
 
@@ -185,4 +185,4 @@ The `EinsumEquation` feeds the path optimizer (`path.mojo`), which produces a `C
 
 The `ContractionPlan` is the IR backends consume. Backends decide how to execute each step: pairwise steps lower to batched matmul on appropriate reshapes; unary steps lower to sum, diagonal, transpose, or trace.
 
-The engineering work is: pick a path that doesn't blow the intermediate, make the reshape free, fold the permutation into the kernel's tile loader. Those three live in `derivations.md` and `perf.md`.
+The engineering work is: pick a path that keeps intermediates bounded, make the reshape free, and fold permutation into the kernel's tile loader. Those three live in `derivations.md` and `perf.md`.

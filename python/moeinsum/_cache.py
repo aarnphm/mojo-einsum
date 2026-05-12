@@ -3,14 +3,13 @@
 The Mojo FFI re-parses the equation, expands ellipsis, builds the
 plan, and dispatches the kernel on every call. For small einsums the
 parse + plan layer often dominates. This module caches the
-*Python-side* setup (canonical equation, path, output shape) keyed by
-(equation, shape_sig, backend, optimize), so a hot call site does a
-single hash lookup before dispatching.
+Python-visible setup keyed by immutable call signatures, so a hot call
+site does a single hash lookup before dispatching.
 
 Once the Mojo side exposes a `plan_einsum(...) -> handle` /
-`execute_plan(handle, operands)` split (P7 deepening), the cache will
-hold the Mojo-side handle directly and the FFI re-parse goes away. For
-now the cache wraps the Python-visible work; it's still ~10x faster on
+`execute_plan(handle, operands)` split, the cache should hold the
+Mojo-side handle directly and the FFI re-parse goes away. For now the
+cache wraps the Python-visible work; it is still materially faster on
 repeated calls vs. cold-cache for small inputs.
 
 LRU eviction with a configurable size cap. Default 512 entries is enough
@@ -59,21 +58,3 @@ class _PlanCache:
 # Module-level default cache. Tests can replace this via
 # `moeinsum._cache.PLAN_CACHE = _PlanCache(max_entries=...)`.
 PLAN_CACHE = _PlanCache()
-
-
-def make_key(
-  equation: str,
-  shapes: tuple[tuple[int, ...], ...],
-  dtype: str,
-  backend: str,
-  optimize: str,
-  accum_dtype: str,
-  target: str,
-) -> tuple[str, tuple[tuple[int, ...], ...], str, str, str, str, str]:
-  """Canonical cache key.
-
-  `shapes` is a tuple-of-tuples (immutable, hashable). `dtype` and
-  `accum_dtype` are stringified dtype names so we don't pin specific
-  numpy/torch dtype objects.
-  """
-  return (equation, shapes, dtype, backend, optimize, accum_dtype, target)

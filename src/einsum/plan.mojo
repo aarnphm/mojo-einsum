@@ -1,16 +1,15 @@
 """Contraction plan IR.
 
-The plan is a backend-agnostic record of *what* to compute. Built from an
-`EinsumEquation` + operand shapes; consumed by any backend (reference /
-max / native / max_graph) to drive execution.
+The plan is a backend-agnostic record of what to compute. It is built from an
+`EinsumEquation` and consumed by any backend: reference, max, native, or
+max_graph.
 
 A plan is an ordered list of `PlanStep`s. Each step is one of:
   - `UnaryStep`: a single-operand op (reduce / diagonal / trace / transpose).
   - `PairwiseStep`: a two-operand contraction whose dim classification
     (B / K / M / N) is precomputed here so backends just lower.
 
-The path optimizer (`path.mojo`) produces the *order* of pairwise steps.
-P1 uses a left-to-right `naive_path`; `greedy` / `optimal` are P4 work.
+The path optimizer (`path.mojo`) produces the order of pairwise steps.
 
 Dim role taxonomy (B/K/M/N), mirroring JAX's `_einsum` algorithm at
 `jax/_src/numpy/lax_numpy.py:3264-3293`:
@@ -74,8 +73,7 @@ struct PairwiseStep(Copyable, Movable):
     var free_axes_rhs: List[Int]
     var out_permutation: List[Int]
 
-
-# Tagged-union via `Variant` - the stdlib idiom.
+# Tagged union via `Variant`, the stdlib idiom.
 comptime PlanStep = Variant[UnaryStep, PairwiseStep]
 
 
@@ -96,6 +94,7 @@ struct ContractionPlan(Copyable, Movable):
 # ---------------------------------------------------------------------
 # Dim classification (B / K / M / N)
 # ---------------------------------------------------------------------
+
 
 def _label_in(labels: List[Int], lbl: Int) -> Bool:
     for i in range(len(labels)):
@@ -223,6 +222,7 @@ def classify_pair(
 # Unary step builder
 # ---------------------------------------------------------------------
 
+
 def build_unary_step(
     operand_idx: Int,
     in_labels: List[Int],
@@ -299,8 +299,9 @@ def build_unary_step(
 
 
 # ---------------------------------------------------------------------
-# Naive left-to-right path (P1 baseline)
+# Naive left-to-right path
 # ---------------------------------------------------------------------
+
 
 def build_naive_plan(eq: EinsumEquation) raises -> ContractionPlan:
     """Build a plan that contracts operands left-to-right.

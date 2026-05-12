@@ -191,6 +191,41 @@ def test_spec_trailing_transpose_when_axis_order_differs() -> None:
   assert spec.ops[-1][1]["dst_labels"] == "ki"
 
 
+def test_executable_max_backend_expands_ellipsis_for_lowering() -> None:
+  """Executable MAX lowering owns a Python ellipsis expansion until the
+  Mojo graph spec grows that support. The shorter rhs ellipsis is
+  right-aligned to the broadcast ellipsis label set.
+  """
+  from moeinsum._max_backend import _parse_equation  # noqa: PLC0415
+
+  inputs, output = _parse_equation("...ij,...jk->...ik", [(2, 3, 4, 5), (3, 5, 6)])
+
+  ell0, ell1 = inputs[0][0], inputs[0][1]
+  assert ell0 != ell1
+  assert inputs == [f"{ell0}{ell1}ij", f"{ell1}jk"]
+  assert output == f"{ell0}{ell1}ik"
+
+
+def test_executable_max_backend_expands_trailing_output_ellipsis() -> None:
+  from moeinsum._max_backend import _parse_equation  # noqa: PLC0415
+
+  inputs, output = _parse_equation("ij...,jk...->ik...", [(2, 3, 5, 1), (3, 4, 5, 1)])
+
+  ell0, ell1 = inputs[0][2], inputs[0][3]
+  assert inputs == [f"ij{ell0}{ell1}", f"jk{ell0}{ell1}"]
+  assert output == f"ik{ell0}{ell1}"
+
+
+def test_executable_max_backend_implicit_output_keeps_ellipsis_first() -> None:
+  from moeinsum._max_backend import _parse_equation  # noqa: PLC0415
+
+  inputs, output = _parse_equation("...ij,...jk", [(7, 2, 3), (7, 3, 4)])
+
+  ell = inputs[0][0]
+  assert inputs == [f"{ell}ij", f"{ell}jk"]
+  assert output == f"{ell}ik"
+
+
 def test_spec_ellipsis_unsupported() -> None:
   with pytest.raises(ValueError, match="ellipsis"):
     plan_to_graph_spec("...ij,jk->...ik", [(2, 3, 4), (4, 5)], [(0, 1)])

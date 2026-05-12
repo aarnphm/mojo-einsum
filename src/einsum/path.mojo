@@ -1,30 +1,27 @@
 """Contraction-path optimizer.
 
-Given an `EinsumEquation` and per-label sizes, choose the order in which
-to perform pairwise contractions. The interface mirrors `opt_einsum`:
+Given an `EinsumEquation` and per-label sizes, choose the pairwise contraction
+order. The interface mirrors `opt_einsum`:
 
-  - `greedy`            - reduced_size heuristic, O(n * k) per step
-  - `optimal`           - DP over subsets (Bellman-Held-Karp), n <= 16
-  - `branch-all`        - best-first DFS over all candidates, FLOP-pruned
-  - `branch-2`          - DFS limited to the top-2 candidates per node
-  - `branch-1`          - DFS limited to top-1 (collapses to greedy)
-  - `random-greedy`     - 32 deterministic noisy-greedy trials
-  - `auto`              - opt_einsum threshold table: optimal (n<=4),
-                          branch-all (n<=6), branch-2 (n<=8), greedy after
-  - `naive`             - left-to-right baseline
-  - `explicit(path)`    - caller-supplied path
+  - `greedy`: reduced_size heuristic.
+  - `optimal`: DP over subsets, Bellman-Held-Karp style, capped at n <= 16.
+  - `branch-all`: best-first DFS over all candidates, FLOP-pruned.
+  - `branch-2`: DFS limited to the top-2 candidates per node.
+  - `branch-1`: DFS limited to top-1, collapsing to greedy.
+  - `random-greedy`: deterministic noisy-greedy trials.
+  - `auto`: opt_einsum threshold table.
+  - `naive`: left-to-right baseline.
+  - `explicit(path)`: caller-supplied path, validated at the Python boundary.
 
-The output is a `ContractionPath`: a `List[(lhs_idx, rhs_idx)]` of
-pairwise step indices, working-set semantics - operand indices refer to
-the working set *at the time of that step*, not original input
-positions.
+Paths use working-set semantics: operand indices refer to the working set at the
+time of that step, not original input positions.
 
-Cost model: `reduced_size = size(A) + size(B) - size(A contract B)`. opt_einsum's
-default; correlates well with FLOPs for typical ML-shaped contractions
-but undervalues FLOP/memory-divergent ops (Cardoso et al. 2024,
-arxiv 2405.09644 propose a corrected cost). v0.1 ships pure
-`reduced_size`. The branch family ranks candidates by reduced_size but
-prunes the DFS frontier by *FLOP* upper bound seeded from greedy.
+Cost model: `reduced_size = size(A) + size(B) - size(A contract B)`. This is
+opt_einsum's default; it correlates well with FLOPs for typical ML-shaped
+contractions but undervalues FLOP/memory-divergent ops. Cardoso et al. 2024
+(arxiv 2405.09644) propose a corrected cost. v0.1 ships pure `reduced_size`.
+The branch family ranks candidates by reduced_size but prunes the DFS frontier
+by FLOP upper bound seeded from greedy.
 """
 
 from einsum.parse import EinsumEquation, ELLIPSIS_LABEL
@@ -45,11 +42,6 @@ comptime PATH_GREEDY: Int = 0
 comptime PATH_OPTIMAL: Int = 1
 comptime PATH_AUTO: Int = 2
 comptime PATH_EXPLICIT: Int = 3
-
-
-# ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
 
 
 def _label_set_union(a: List[Int], b: List[Int]) -> List[Int]:
@@ -140,7 +132,8 @@ def _reduced_size_cost(
 ) -> Int:
     """opt_einsum's greedy cost: how much memory the step removes.
 
-    `size(A) + size(B) - size(A contract B)`. Bigger = better (greater memory reduction = preferred pair).
+    `size(A) + size(B) - size(A contract B)`. Bigger means greater memory
+    reduction, so the pair is preferred.
     """
     var a = _tensor_size(lhs, label_sizes)
     var b = _tensor_size(rhs, label_sizes)
@@ -167,18 +160,14 @@ def _flop_cost(
     return f
 
 
-# ---------------------------------------------------------------------
-# Greedy path
-# ---------------------------------------------------------------------
-
-
 def greedy_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
 ) raises -> List[ContractionStep]:
     """opt_einsum's greedy `reduced_size` heuristic.
 
-    Repeatedly pick the pair maximizing `reduced_size`. Ties broken by smaller FLOP cost, then by leftmost lhs index.
+    Repeatedly pick the pair maximizing `reduced_size`. Ties break by smaller
+    FLOP cost, then by leftmost lhs index.
     """
     var n = eq.n_operands()
     if n < 2:
@@ -234,16 +223,10 @@ def greedy_path(
     return steps^
 
 
-# ---------------------------------------------------------------------
-# Optimal path (DP over subsets, Bellman-Held-Karp)
-# ---------------------------------------------------------------------
-
-
 def _subset_labels(
     subset_mask: Int,
     n: Int,
     operand_labels: List[List[Int]],
-    other_operand_labels_template: List[List[Int]],
     final_output: List[Int],
 ) -> List[Int]:
     """Compute the surviving label set for a subset of operands.
@@ -285,13 +268,11 @@ def optimal_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
 ) raises -> List[ContractionStep]:
-    """DP over subsets - optimal in FLOPs, O(3^n) time, O(2^n) memory.
+    """DP over subsets, optimal in FLOPs, O(3^n) time and O(2^n) memory.
 
-    Tractable for n <= 16 (about 43M states at n=16). Above 16, fall back to
-    greedy. Caller is responsible for the threshold check.
-
-    State: `f[S]` = minimum total FLOP cost to contract subset `S`.
-    Recurrence: `f[S] = min over non-empty proper T in S of f[T] + f[S minus T] + cost(T, S minus T)`.
+    State: `f[S]` is the minimum total FLOP cost to contract subset `S`.
+    Recurrence: split each non-empty proper `T` from `S`, then combine
+    `T` with `S \\ T`.
     """
     var n = eq.n_operands()
     if n > 16:
@@ -310,9 +291,7 @@ def optimal_path(
     # surviving labels if S were contracted into a single tensor.
     var subset_labels = List[List[Int]]()
     for s in range(n_subsets):
-        var labels = _subset_labels(
-            s, n, operand_labels, operand_labels, eq.output
-        )
+        var labels = _subset_labels(s, n, operand_labels, eq.output)
         subset_labels.append(labels^)
 
     # f[S] = best cost to contract subset S to a single tensor.
@@ -330,7 +309,7 @@ def optimal_path(
 
     # DP over subset sizes ascending.
     for s in range(1, n_subsets):
-        # Count popcount manually (popcount is cheap, but loop is OK at n <= 16).
+        # Count popcount manually; cheap enough at n <= 16.
         var pop: Int = 0
         var tmp = s
         while tmp > 0:
@@ -357,14 +336,14 @@ def optimal_path(
                     best_split_lhs[s] = t
             t = (t - 1) & s
 
-    # Reconstruct path by walking the splits, recording pairwise steps
-    # in post-order (deepest leaves first). The output uses working-set
-    # indices, so we need to translate the bit-set view to a linear one.
+    # Reconstruct path by walking the splits, recording pairwise steps in
+    # post-order. The output uses working-set indices, so translate the bit-set
+    # view to a linear working-set view.
     var steps = List[ContractionStep]()
     _emit_path_dfs(n_subsets - 1, best_split_lhs, steps)
 
-    # `steps` currently records (subset_mask_lhs, subset_mask_rhs) - we
-    # need (working_set_idx_lhs, working_set_idx_rhs). Translate.
+    # `steps` currently records (subset_mask_lhs, subset_mask_rhs). We need
+    # (working_set_idx_lhs, working_set_idx_rhs).
     var working = List[Int]()  # bitmask per working-set slot
     for i in range(n):
         working.append(1 << i)
@@ -414,11 +393,6 @@ def _emit_path_dfs(
     steps.append(ContractionStep(lhs, rhs))
 
 
-# ---------------------------------------------------------------------
-# Branch family - best-first DFS, FLOP-pruned
-# ---------------------------------------------------------------------
-
-
 def branch_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
@@ -426,19 +400,9 @@ def branch_path(
 ) raises -> List[ContractionStep]:
     """Best-first DFS over the contraction tree, pruned by current-best FLOPs.
 
-    Args:
-        nbranch:  at each interior node, recurse into the top `nbranch`
-                  candidates ranked by reduced_size. ``-1`` expands
-                  every candidate (`branch-all`); ``2`` is `branch-2`;
-                  ``1`` is `branch-1`, which by construction returns
-                  the greedy path (the top-1 candidate at every level
-                  is exactly what greedy already picks).
-
-    The initial FLOP upper bound is seeded by a greedy pass - branch
-    is therefore *never worse* than greedy. For n <= 8 a full tree
-    walk is tractable; the threshold is enforced by `auto_path`
-    rather than baked in here, so callers can opt into deeper search
-    if they know their workload.
+    `nbranch` controls how many top reduced-size candidates are expanded at each
+    node. `-1` means every candidate, `2` is `branch-2`, and `1` is exactly the
+    greedy path.
     """
     var n = eq.n_operands()
     if n < 2:
@@ -446,8 +410,8 @@ def branch_path(
 
     var greedy_steps = greedy_path(eq, label_sizes)
     if nbranch == 1:
-        # Short-circuit: greedy *is* the top-1-candidate-at-every-level
-        # path, by definition of `greedy_path`'s tiebreakers.
+        # Short-circuit: greedy is the top-1-candidate-at-every-level path, by
+        # definition of `greedy_path`'s tiebreakers.
         return greedy_steps^
 
     var best_flops = _path_total_flops(eq, label_sizes, greedy_steps)
@@ -490,9 +454,9 @@ def _branch_recurse(
     if current_flops >= best_flops:
         return  # prune - this partial path can't beat the current best
 
-    # Enumerate every (i, j) candidate and its cost numbers. At the
-    # depths branch is used for (n <= 8), n_cand <= 28 - selection sort
-    # is faster than instantiating a heap.
+    # Enumerate every (i, j) candidate and its cost numbers. At the depths branch
+    # is used for (n <= 8), n_cand <= 28, so selection sort is cheaper than
+    # instantiating a heap.
     var n_w = len(working)
     var lhs_list = List[Int]()
     var rhs_list = List[Int]()
@@ -576,11 +540,6 @@ def _branch_recurse(
         )
 
 
-# ---------------------------------------------------------------------
-# Auto dispatch
-# ---------------------------------------------------------------------
-
-
 def auto_path(
     eq: EinsumEquation,
     label_sizes: List[Int],
@@ -600,11 +559,6 @@ def auto_path(
     if n <= 8:
         return branch_path(eq, label_sizes, 2)
     return greedy_path(eq, label_sizes)
-
-
-# ---------------------------------------------------------------------
-# Public entrypoint
-# ---------------------------------------------------------------------
 
 
 def _path_total_flops(
@@ -656,11 +610,9 @@ def random_greedy_path(
     `seed + trial * 1009 + step + lhs * 131 + rhs * 17`. After N
     trials, return whichever path has the lowest *total* FLOP cost.
 
-    This is the working approximation of opt_einsum's random-greedy
-    (PR #78). The original uses Gumbel-noise-perturbed costs; a hashed
-    tiebreaker is the same shape at coarser resolution - good enough
-    to escape the deterministic-greedy traps for typical n <= 30
-    contractions.
+    This is the working approximation of opt_einsum's random-greedy (PR #78).
+    The original uses Gumbel-noise-perturbed costs; hashed jitter has the same
+    rough shape and is deterministic enough for tests.
     """
     if n_trials < 1:
         n_trials = 1
@@ -807,8 +759,8 @@ def compute_path(
     """Dispatch to the named algorithm.
 
     Supported algorithms: `greedy`, `optimal`, `auto`, `naive`,
-    `random-greedy` (32 trials), `random-greedy-N` for any N >= 1,
-    `branch-all`, `branch-2`, `branch-1`. "naive" is deterministic
+    `random-greedy` with 32 trials, `random-greedy-N` for any positive integer
+    N, `branch-all`, `branch-2`, and `branch-1`. `naive` is deterministic
     left-to-right pairing, useful as a baseline.
     """
     if algorithm == String("greedy"):
@@ -828,7 +780,6 @@ def compute_path(
     if algorithm == String("branch-1"):
         return branch_path(eq, label_sizes, 1)
 
-    # random-greedy-N (N a positive integer).
     var rg_prefix = String("random-greedy-")
     if _has_prefix(algorithm, rg_prefix):
         var n_trials = _parse_trial_suffix(algorithm, len(rg_prefix.as_bytes()))
@@ -845,11 +796,7 @@ def compute_path(
 
 
 def naive_path(eq: EinsumEquation) raises -> List[ContractionStep]:
-    """Left-to-right: (0,1), then (0,1) on the new working set, etc.
-
-    This is what P1's `build_naive_plan` used implicitly. Exposed for
-    debugging / regression baselines.
-    """
+    """Left-to-right: (0,1), then (0,1) on the new working set, etc."""
     var n = eq.n_operands()
     var steps = List[ContractionStep]()
     for _ in range(n - 1):

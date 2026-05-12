@@ -7,11 +7,7 @@ _see also [[notation|Notation]]._
 
 ## 1. The BMM lowering
 
-> [!important]
->
-> _Any two-operand contraction reduces to a batched matmul, after at most one permutation per operand._
-
-This is what JAX's `einsum` does, what PyTorch's `sumproduct_pair` does (`aten/src/ATen/native/Linear.cpp`), and what cuTENSOR ultimately lowers to.
+Any two-operand contraction reduces to a batched matmul after at most one permutation per operand. JAX's `einsum`, PyTorch's `sumproduct_pair` (`aten/src/ATen/native/Linear.cpp`), and cuTENSOR all use this shape.
 
 Take a two-operand contraction `lhs,rhs->out` with labels classified into [[notation#four sets]]:
 
@@ -36,9 +32,7 @@ The whole pipeline is: at most one reshape (zero-copy via strides), one permute,
 
 ### When is the permute free?
 
-> [!important]
->
-> A permutation is free _iff_ it can be expressed as a layout change with no data movement.
+A permutation is free _iff_ it can be expressed as a layout change with no data movement.
 
 For row-major contiguous input, the target permutation must coincide with the natural memory order:
 
@@ -52,7 +46,7 @@ When the would-be permutation is exactly a 2D transpose of the inner block, the 
 1. Materialize the permute into a fresh buffer (TTGT - Transpose-Transpose-GEMM-Transpose).
 2. Fuse the permute into the GEMM's tile-loading code (see [[#3. GETT: GEMM-like Tensor-Tensor multiplication|GETT]]).
 
-`MaxBackend` does (1) when the permute is non-trivial; `NativeOptimizedBackend` does (2).
+The executable MAX Graph path does (1) when the permute is non-trivial; `NativeOptimizedBackend` is the planned home for (2).
 
 ### The inner BMM kernel
 
@@ -111,15 +105,15 @@ $$\text{cost}_{\text{Cardoso}}(A, B) = \alpha \cdot \text{flops}(A, B) + (1 - \a
 
 with $\alpha$ tuned per-problem.
 
-`path.mojo` keeps FLOP and memory cost as separate functions, so wiring the Cardoso mix is straightforward. tbd.
+`path.mojo` keeps FLOP and memory cost as separate functions, so the Cardoso mix can be added without changing the parser or plan IR.
 
 ### The branch family
 
-`opt_einsum` ships `branch-all`, `branch-2`, `branch-1` - best-first searches over the contraction tree, pruned by current best total. They sit between DP-optimal and greedy on the time/quality curve. For $n=5\text{-}7$ they're often the sweet spot. To be implemented.
+`opt_einsum` ships `branch-all`, `branch-2`, `branch-1` - best-first searches over the contraction tree, pruned by current best total. They sit between DP-optimal and greedy on the time/quality curve. `path.mojo` implements the same family.
 
 ## 3. GETT: GEMM-like Tensor-Tensor multiplication
 
-The BMM lowering's weakness is the physical permute cost. When contracted dims aren't naturally adjacent in memory, you pay a bandwidth-bound transpose with no FLOPs to amortize. For irregular contractions the transpose dominates.
+The BMM lowering's weakness is the physical permute cost. When contracted dims are not adjacent in memory, you pay a bandwidth-bound transpose with no FLOPs to amortize. For irregular contractions the transpose dominates.
 
 GETT (Springer et al. 2018, [arxiv 1607.00145](https://arxiv.org/abs/1607.00145); same idea Matthews exploited in TBLIS, [arxiv 1607.00291](https://arxiv.org/abs/1607.00291)) fuses the transpose into the GEMM's tile-loading code.
 
@@ -159,13 +153,13 @@ for each M-tile, K-tile, N-tile:
 
 Matthews's TBLIS Table III (Haswell, dgemm): TBLIS within 5-10% of theoretical peak on most synthetic contractions, beating TTGT by 1.3-2.5x when permutes were expensive. Springer & Bientinesi report similar numbers for GETT on Skylake.
 
-On GPU, cuTENSOR ships `CUTENSOR_ALGO_GETT` as a dispatch option. Hopper's WGMMA + TMA make GETT natural - TMA asynchronously fetches tile-shaped regions with arbitrary multi-dim strides directly into shared memory, and WGMMA consumes from shared without caring about source layout. GETT's "fuse the permute into packing" idea, at the hardware level. moeinsum's `NativeOptimizedBackend` (P12) follows this pattern.
+On GPU, cuTENSOR ships `CUTENSOR_ALGO_GETT` as a dispatch option. Hopper's WGMMA + TMA fit this path: TMA fetches tile-shaped regions with arbitrary multi-dim strides into shared memory, and WGMMA consumes from shared. moeinsum's `NativeOptimizedBackend` (P12) follows this pattern.
 
 ### When GETT loses
 
 GETT needs more code per kernel: every contraction shape technically wants its own permute-aware packing routine. cuTENSOR sidesteps this with JIT per-contraction (cuTENSOR 2.0). Without JIT, you ship either a kernel per shape family (CUTLASS's template explosion) or a generic-but-slower packer.
 
-Mojo's compile-time specialization is the natural answer. If the equation is a `StringLiteral` (or a JIT-cache key in our P7 model), each unique B/K/M/N signature compiles to its own specialized packing loop. No NVRTC tax, no template explosion. This is the architectural argument for a fresh Mojo implementation over wrapping cuTENSOR.
+Mojo's compile-time specialization gives each unique B/K/M/N signature its own packing loop when the equation is a `StringLiteral` or JIT-cache key. That avoids NVRTC and a CUTLASS-style template matrix.
 
 ## 4. Low-precision accumulation
 
@@ -183,7 +177,7 @@ Accumulated error is $\sum_k a_k b_k \epsilon_k$. Under independence and zero-me
 
 $$\sigma(\text{err}) \approx u \cdot \sqrt{K} \cdot \sigma(ab).$$
 
-For bf16 at $K=64$: $u\sqrt{64} \approx 7.8 \times 10^{-3} \cdot 8 = 6.2 \times 10^{-2}$ - _6% relative error_. At $K=1024$: 25%. At $K=4096$ (typical transformer dim): 50%. **The results are garbage.**
+For bf16 at $K=64$: $u\sqrt{64} \approx 7.8 \times 10^{-3} \cdot 8 = 6.2 \times 10^{-2}$ - _6% relative error_. At $K=1024$: 25%. At $K=4096$ (typical transformer dim): 50%. bf16 accumulation is not usable for these reductions.
 
 fp32 accumulation with bf16 inputs: $u\sqrt{K} \approx 1.2 \times 10^{-7} \cdot \sqrt{4096} \approx 7.7 \times 10^{-6}$ at $K=4096$ - fine.
 
@@ -191,11 +185,11 @@ fp32 accumulation with bf16 inputs: $u\sqrt{K} \approx 1.2 \times 10^{-7} \cdot 
 
 For any einsum with $K > 64$ and low-precision inputs, use a higher-precision accumulator. cuBLAS bf16 GEMMs default to `CUBLAS_COMPUTE_32F`; cuTENSOR bf16 contractions default to `CUTENSOR_COMPUTE_32F`. bf16-accumulating bf16 is sane only when $K$ is statically known to be small (e.g. 16 in some attention heads).
 
-moeinsum's API has an `accum_dtype` parameter (default fp32 when inputs are fp16/bf16). `MaxBackend` forwards this to `linalg.batched_matmul`'s compute-type; the reference backend ignores it - always fp64 internally for v0.1 - and is the source of truth for numerical regression testing.
+moeinsum's API has an `accum_dtype` parameter. The reference backend ignores it and accumulates in fp64; optimized backends use the backend's matmul accumulation policy until the Mojo TileTensor cutover exposes opcode-level control.
 
 ### Pairwise vs serial summation
 
-A second-order effect: even at full precision, serial accumulation of $K$ terms has worst-case error $O(K \cdot u)$. Pairwise summation (recurse-and-sum) reduces this to $O(\log K \cdot u)$. cuBLAS and modern GEMMs pairwise-sum inside the tile; a naive einsum kernel might not. moeinsum's reference is serial; the optimized backends (P11+) should pairwise-accumulate in the inner loop. Not a correctness issue for the reference - fp64 absorbs the worst case at any practical $K$ - but a quality knob worth surfacing.
+Even at full precision, serial accumulation of $K$ terms has worst-case error $O(K \cdot u)$. Pairwise summation reduces this to $O(\log K \cdot u)$. cuBLAS and modern GEMMs pairwise-sum inside the tile; moeinsum's reference path is serial and fp64, while optimized backends should pairwise-accumulate in the inner loop.
 
 ## 5. The diagonal stride trick
 
@@ -214,13 +208,13 @@ For higher rank - `'iji->ij'` extracts the $i=k$ slice of a 3D tensor - the same
 
 In general, for a diagonal across $k$ repeated occurrences of one label at axes $a_1, \ldots, a_k$, the diagonal-axis stride is $\sigma_{a_1} + \sigma_{a_2} + \cdots + \sigma_{a_k}$; other axes unchanged.
 
-moeinsum's `unary.mojo` (Phase 3) implements this: pull per-axis strides from the input's `Layout`, sum the strides of repeated labels into a new axis, build a new `Layout`. Zero copy whenever the input is contiguous-enough to be viewed.
+moeinsum's `unary.mojo` implements this by summing the strides of repeated labels into one surviving axis. It is zero-copy whenever the input can be represented as a view.
 
 The historical bug (PyTorch issue #21760 et al.) was forgetting non-contiguous inputs. `A[::2, ::2]` is a 2x downsampled view - row stride `2n`, column stride 2, so the diagonal stride should be `2n + 2`, not `n + 1`. The contiguous-only formula gives the wrong answer.
 
 ## 6. Output-permutation choice
 
-Once `(*B, *M, *K) x (*B, *K, *N) -> (*B, *M, *N)` is done, we permute `(*B, *M, *N)` to `out_labels`. There's a choice nobody documents well: swap lhs and rhs (compute `(*B, *N, *K) x (*B, *K, *M) -> (*B, *N, *M)`) when that produces a result whose natural axis order already matches `out_labels`.
+Once `(*B, *M, *K) x (*B, *K, *N) -> (*B, *M, *N)` is done, we permute `(*B, *M, *N)` to `out_labels`. The planner can also swap lhs and rhs (compute `(*B, *N, *K) x (*B, *K, *M) -> (*B, *N, *M)`) when that natural axis order already matches `out_labels`.
 
 JAX exploits this. `lax_numpy.py:3288-3300`:
 
@@ -239,4 +233,4 @@ else:
     operand = _dot_general(lhs, rhs, dimension_numbers, precision)
 ```
 
-moeinsum's `classify_pair` always uses lhs-first, so roughly half of contractions take a final permute they could have avoided. One-line conditional in the plan builder - perf-phase work.
+moeinsum's `classify_pair` currently uses lhs-first, so some contractions take a final permute they could avoid. The fix belongs in pair classification or pairwise lowering.

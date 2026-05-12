@@ -4,9 +4,8 @@ Given an einsum equation, operand shapes, and a contraction path, compute
 the per-step FLOP cost and the peak intermediate tensor size. Useful for
 debugging why one `optimize=` setting beats another.
 
-Stays Python-side - duplicates the cost math from `path.mojo`'s
-`_flop_cost` / `_reduced_size_cost` so users can compute costs without
-crossing the FFI boundary.
+Stays Python-side - duplicates the cost math from `path.mojo` so users
+can compute costs without crossing the FFI boundary.
 """
 
 from __future__ import annotations
@@ -26,12 +25,11 @@ def _label_set(labels: list[int]) -> list[int]:
 
 
 def _intern_labels(eq: str) -> tuple[list[list[int]], list[int]]:
-  """Cheap re-implementation of parse() that returns operand label-int
-  lists + output label-int list.
+  """Cheap equation parser for path-cost records.
 
-  We can't call moeinsum.parse_equation here because that'd create a
-  circular import; this is a deliberate duplicate. ASCII-only - matches
-  what the Mojo parser handles.
+  We cannot call `moeinsum.parse_equation` here because that would create
+  a circular import. This deliberate duplicate stays ASCII-only and
+  matches the subset handled by the cost helper.
   """
   if "->" in eq:
     input_part, output_part = eq.split("->", 1)
@@ -114,10 +112,10 @@ def path_cost(
 
   for step in path:
     if len(step) == 1:
-      # Unary step - collapse repeated labels then drop reduce-out labels.
+      # Unary step - collapse repeated labels, then drop labels that are
+      # neither in the final output nor needed by another live operand.
       idx = step[0]
       labels = working[idx]
-      # Survive only labels needed downstream.
       future: set[int] = set(final_output)
       for j, op in enumerate(working):
         if j != idx:
@@ -139,8 +137,8 @@ def path_cost(
     lhs = working[li]
     rhs = working[ri]
 
-    # Future labels: in final_output or in any other operand still
-    # in the working set.
+    # Future labels survive when they are in the final output or in any
+    # other operand still in the working set.
     future = set(final_output)
     for j, op in enumerate(working):
       if j != li and j != ri:

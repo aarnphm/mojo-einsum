@@ -1,16 +1,13 @@
-"""Reference backend - naive global-index loop.
+"""Reference backend: a global-index loop used as the correctness oracle.
 
-The simplest correct einsum: for every assignment of values to the union
-of all input labels, multiply the indexed input scalars, and accumulate
-into the indexed output position. Quadratic in the worst case (or worse
- -  exponential in label count), but it always produces the right answer.
-That's the entire point: this is the golden against which every other
-backend is regression-tested.
+For every assignment of values to the union of all input labels, multiply the
+indexed input scalars and accumulate into the indexed output position. This is
+not the fast path, but it is the golden backend every optimized lowering is
+regression-tested against.
 
 This backend operates on flat `Float64` buffers + explicit shapes /
-strides. It does *not* depend on `TileTensor` or any MAX kernel, so it
-is fully self-contained - useful for testing the parser, plan builder,
-and dim classification in isolation from the MAX integration.
+strides. It does not depend on `TileTensor` or MAX kernels, so parser, planner,
+and dimension-classification tests can run without MAX integration.
 
 Memory model:
   - Each operand is a strided buffer over `Float64`.
@@ -26,8 +23,9 @@ Implementation notes:
   - For each global index, project to per-operand indices via that
     operand's label list, look up the scalar, multiply across operands.
     Project to the output index via `eq.output` and accumulate.
-  - Operates on `Float64` for v0.1 simplicity; generalization to other
-    dtypes lifts to a `@parameter` over `DType` later (P9).
+  - Operates on `Float64`; dtype handling is done at the Python boundary for
+    v0.1. Generalization to other dtypes lifts to a parameter over `DType`
+    later.
 """
 
 from std.collections import List
@@ -68,7 +66,8 @@ def _resolve_label_sizes(
                 )
             )
 
-        # Within-operand strict pass: repeated labels must share a size.
+        # Within-operand strict pass: repeated labels must share a size. Repeated
+        # labels select a diagonal, never a broadcast.
         var local = List[Int]()
         for _ in range(eq.n_labels):
             local.append(-1)
@@ -93,8 +92,8 @@ def _resolve_label_sizes(
                     )
                 )
 
-        # Cross-operand merge with size-1 broadcast: (1, N) resolves to
-        # N; (M, N) with M != N and both > 1 is a real conflict.
+        # Cross-operand merge with size-1 broadcast: (1, N) resolves to N;
+        # (M, N) with M != N and both > 1 is a real conflict.
         for lbl in range(eq.n_labels):
             var dim = local[lbl]
             if dim == -1:
@@ -122,8 +121,8 @@ def _resolve_label_sizes(
                     )
                 )
 
-    # Any label that survived only in the output (not in any input) is
-    # an error - there's no source to read from.
+    # Any label that survived only in the output, not in any input, has no source
+    # element to read.
     for lbl in eq.output:
         if sizes[lbl] == -1:
             raise Error(
@@ -175,7 +174,7 @@ def execute_reference(
     var label_sizes = _resolve_label_sizes(eq, operand_shapes)
     var n_labels = eq.n_labels
 
-    # Output rank can be zero (scalar-result einsum like 'ii->').
+    # Output rank can be zero, e.g. scalar-result einsum like 'ii->'.
     var out_rank = len(eq.output)
 
     # Global-index iteration state.

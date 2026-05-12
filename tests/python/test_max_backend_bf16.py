@@ -30,8 +30,8 @@ import numpy as np
 import pytest
 
 try:
-  from moeinsum._max_graph import is_loadable as _is_loadable  # noqa: PLC0415
   import ml_dtypes
+  from moeinsum._max_graph import is_loadable as _is_loadable  # noqa: PLC0415
 
   HAS_BF16 = _is_loadable()
   BFLOAT16 = np.dtype(ml_dtypes.bfloat16) if HAS_BF16 else None

@@ -1,9 +1,9 @@
 """Framework-agnostic array adapter.
 
-Two responsibilities - converting *into* a NumPy view (without forcing
-fp64) and converting *out of* one back to the caller's framework.
-Both paths prefer DLPack zero-copy, then fall back to `np.asarray` /
-the destination framework's array constructor.
+Two responsibilities - converting into a NumPy view without forcing
+fp64, and converting out of one back to the caller's framework. Both
+paths prefer DLPack zero-copy, then fall back to `np.asarray` / the
+destination framework's array constructor.
 
 Conversion in (`to_numpy`):
   1. `numpy.ndarray` - passthrough.
@@ -14,16 +14,16 @@ Conversion in (`to_numpy`):
 
 Conversion out (`from_numpy`):
   1. `"numpy"` - passthrough.
-  2. `"torch"` - `torch.from_numpy(arr).to(reference_device)`.
+  2. `"torch"` - `torch.from_dlpack(arr)` where possible, else
+     `torch.from_numpy(arr)`.
   3. `"jax"` - `jax.numpy.asarray(arr)`; lands on default device.
   4. `"mlx"` - `mx.array(arr)`; mlx has no DLPack-from-numpy in 0.x,
      so this is a copy.
-  5. `"cupy"` / `"tensorflow"` - `np.asarray` round-trip via DLPack
-     when supported, copy when not.
+  5. `"cupy"` / `"tensorflow"` - framework constructors.
 
-Dtype handling: by default, both functions preserve the source's
-dtype. Pass `dtype=` to cast explicitly. The fp64-everywhere v0.1
-simplification is gone - callers see the dtype they sent.
+Dtype handling: by default, both functions preserve the source's dtype.
+Pass `dtype=` to cast explicitly. The fp64 conversion belongs at the
+reference-backend FFI boundary, not here.
 """
 
 from __future__ import annotations
@@ -38,12 +38,11 @@ import numpy as np
 
 _ZERO_COPY_DLPACK_SOURCES = ("torch", "jax", "mlx", "cupy", "tensorflow")
 
-# Some frameworks ship their array types from a sibling C-extension module
-# whose name differs from the user-facing pip name. `type(jax_array).__module__`
-# is `"jaxlib._jax"` (or `"jaxlib.xla_extension"` on older versions), so a naive
-# `module.split('.', 1)[0]` returns `"jaxlib"` and the dispatch falls through to
-# `"other"`, killing the round-trip back to a jax array. Alias the C-extension
-# package to the user-facing one here.
+# Some frameworks ship array types from a sibling C-extension module whose
+# name differs from the user-facing pip name. `type(jax_array).__module__`
+# can be `"jaxlib._jax"` (or `"jaxlib.xla_extension"` on older versions),
+# so a naive module split returns `"jaxlib"` and kills the round-trip back
+# to a jax array. Alias the C-extension package to the public framework.
 _MODULE_ALIASES = {
   "jaxlib": "jax",
 }
@@ -70,19 +69,15 @@ def to_numpy(
 
   Prefer DLPack zero-copy when the source exposes the protocol; fall
   back to `np.asarray` otherwise. The result is always C-contiguous.
-
-  `dtype` defaults to None - preserve the source's dtype. Pass an
-  explicit dtype to cast (the v0.1 callsite did `dtype=np.float64`
-  to force fp64 for the reference backend's FFI; that conversion now
-  lives at the FFI boundary, not here).
+  `dtype` defaults to None, preserving the source dtype.
   """
   if _looks_like_dlpack_source(obj):
     try:
       candidate = np.from_dlpack(obj)
     except (TypeError, RuntimeError, BufferError):
-      # GPU-resident tensors fail np.from_dlpack - fall through to
-      # the generic adapter, which will trip the source's own
-      # CPU-fallback (`.cpu()` for torch, `np.asarray` for jax).
+      # GPU-resident tensors can fail `np.from_dlpack` when NumPy cannot
+      # consume the device. Fall through to the framework's generic
+      # adapter, which may perform its own CPU fallback.
       candidate = np.asarray(obj)
   else:
     candidate = np.asarray(obj)
@@ -112,23 +107,18 @@ def source_kind(obj: object) -> str:
 def from_numpy(arr: np.ndarray, kind: str) -> object:
   """Round-trip a NumPy result back to the source framework.
 
-  No-op for `"numpy"` / `"other"` (the caller never asked for a
-  framework array). For `"torch"` / `"jax"` / `"mlx"` /
-  `"cupy"` / `"tensorflow"` we import lazily so the dependency
-  is genuinely optional.
-
-  Raises ImportError if the named framework isn't installed - the
-  caller chose this return path explicitly via the first operand,
-  so a missing-package surface is the right failure mode.
+  No-op for `"numpy"` / `"other"`. Optional frameworks import lazily so
+  they remain genuinely optional. A missing package should surface as
+  ImportError when the caller explicitly chose that return path.
   """
   if kind in ("numpy", "other"):
     return arr
   if kind == "torch":
     import torch  # noqa: PLC0415 - lazy by design
 
-    # DLPack-from-numpy works in torch 2.0+; older falls through to
-    # the from_numpy path (a copy).
     try:
+      # DLPack-from-numpy works in torch 2.0+; older versions fall back
+      # to from_numpy.
       return torch.from_dlpack(arr)
     except (TypeError, RuntimeError):
       return torch.from_numpy(arr)

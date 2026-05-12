@@ -1,19 +1,8 @@
-"""MAX Graph backend for supported einsum contractions.
+"""Executable MAX Graph backend for BMM-lowerable contractions.
 
-This is the first executable `backend="max"` path. It deliberately lives in
-Python instead of the Mojo FFI layer: the installed MAX Graph API can already
-compile the B/K/M/N lowering we need, and keeping that path here lets us validate
-shape semantics on CPU/GPU before threading TileTensor handles through Mojo.
-
-Supported v0:
-  - no ellipsis
-  - no repeated labels inside a single operand
-  - pairwise path steps lowered to batched matmul
-  - unary transpose / reduce-sum steps
-
-Unsupported cases raise `NotImplementedError` instead of silently falling back
-to reference. `backend="max"` should mean "MAX executed this", not "the word MAX
-appeared near a NumPy result". Extremely small but important bit of honesty.
+The backend supports ellipsis expansion, size-1 broadcast, pairwise
+matmul, unary transpose, and unary reduce-sum. Repeated labels raise
+`NotImplementedError` rather than falling back to the reference path.
 """
 
 from __future__ import annotations
@@ -23,7 +12,7 @@ from dataclasses import dataclass
 from functools import reduce
 from operator import mul
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -43,6 +32,34 @@ class _Node:
   shape: tuple[int, ...]
 
 
+class _LabeledShape(Protocol):
+  labels: str
+  shape: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _LoweringNode:
+  labels: str
+  shape: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _PairLayout:
+  lhs: _LabeledShape
+  rhs: _LabeledShape
+  lhs_sizes: dict[str, int]
+  rhs_sizes: dict[str, int]
+  sizes: dict[str, int]
+  batch: str
+  contract: str
+  free_lhs: str
+  free_rhs: str
+  lhs_order: str
+  rhs_order: str
+  natural_labels: str
+  swapped: bool
+
+
 @dataclass
 class _Executable:
   model: Model
@@ -54,19 +71,81 @@ _MODEL_CACHE: OrderedDict[tuple[object, ...], _Executable] = OrderedDict()
 _MODEL_CACHE_LOCK = RLock()
 
 
-def _parse_equation(eq: str) -> tuple[list[str], str]:
-  if "." in eq:
-    raise NotImplementedError("backend='max' does not support ellipsis yet")
+def _synthetic_ellipsis_labels(n_labels: int) -> list[str]:
+  return [chr(0xE000 + i) for i in range(n_labels)]
+
+
+def _split_ellipsis(labels: str) -> tuple[str, str] | None:
+  if "..." not in labels:
+    if "." in labels:
+      raise ValueError(f"invalid ellipsis in labels {labels!r}")
+    return None
+  if labels.count("...") != 1:
+    raise ValueError(f"labels {labels!r} contain more than one ellipsis")
+  before, after = labels.split("...", 1)
+  if "." in before or "." in after:
+    raise ValueError(f"invalid ellipsis in labels {labels!r}")
+  return before, after
+
+
+def _parse_equation(eq: str, shapes: list[tuple[int, ...]]) -> tuple[list[str], str]:
   if "->" in eq:
     lhs, output = eq.split("->", 1)
   else:
     lhs = eq
+    output = ""
+  raw_inputs = lhs.split(",")
+  if len(raw_inputs) != len(shapes):
+    raise ValueError(f"equation has {len(raw_inputs)} operands but got {len(shapes)} shapes")
+
+  input_parts: list[tuple[str, str] | None] = []
+  ellipsis_shapes: list[tuple[int, ...]] = []
+  for raw_labels, shape in zip(raw_inputs, shapes, strict=True):
+    parts = _split_ellipsis(raw_labels)
+    input_parts.append(parts)
+    if parts is None:
+      if len(raw_labels) != len(shape):
+        raise ValueError(f"operand labels {raw_labels!r} have rank {len(raw_labels)} but shape has rank {len(shape)}")
+      continue
+
+    before, after = parts
+    ellipsis_rank = len(shape) - len(before) - len(after)
+    if ellipsis_rank < 0:
+      raise ValueError(f"operand labels {raw_labels!r} have too many explicit labels for shape {shape}")
+    ellipsis_shapes.append(tuple(shape[len(before) : len(shape) - len(after)]))
+
+  if ellipsis_shapes:
+    ellipsis_shape = np.broadcast_shapes(*ellipsis_shapes)
+  else:
+    ellipsis_shape = ()
+  ellipsis_labels = _synthetic_ellipsis_labels(len(ellipsis_shape))
+
+  inputs: list[str] = []
+  for raw_labels, parts, shape in zip(raw_inputs, input_parts, shapes, strict=True):
+    if parts is None:
+      inputs.append(raw_labels)
+      continue
+    before, after = parts
+    ellipsis_rank = len(shape) - len(before) - len(after)
+    labels = "".join(ellipsis_labels[len(ellipsis_labels) - ellipsis_rank :])
+    inputs.append(before + labels + after)
+
+  output_parts = _split_ellipsis(output) if "->" in eq else None
+  if "->" in eq:
+    if output_parts is None:
+      final_output = output
+    else:
+      before, after = output_parts
+      final_output = before + "".join(ellipsis_labels) + after
+  else:
     counts: dict[str, int] = {}
-    for c in lhs.replace(",", ""):
+    for c in "".join(inputs):
       counts[c] = counts.get(c, 0) + 1
-    output = "".join(sorted(c for c, count in counts.items() if count == 1))
-  inputs = lhs.split(",")
-  return inputs, output
+    synthetic = set(ellipsis_labels)
+    final_output = "".join(ellipsis_labels) + "".join(
+      sorted(c for c, count in counts.items() if count == 1 and c not in synthetic)
+    )
+  return inputs, final_output
 
 
 def _reject_repeated_labels(labels: str) -> None:
@@ -94,6 +173,21 @@ def _product(values: list[int]) -> int:
 
 def _sizes_for(labels: str, sizes: dict[str, int]) -> list[int]:
   return [sizes[label] for label in labels]
+
+
+def _merge_label_sizes(lhs_sizes: dict[str, int], rhs_sizes: dict[str, int]) -> dict[str, int]:
+  sizes = dict(lhs_sizes)
+  for label, dim in rhs_sizes.items():
+    previous = sizes.get(label)
+    if previous is None or previous == dim:
+      sizes[label] = dim
+    elif previous == 1:
+      sizes[label] = dim
+    elif dim == 1:
+      continue
+    else:
+      raise ValueError(f"size conflict on label {label!r}: {previous} vs {dim}")
+  return sizes
 
 
 def _permute_if_needed(value: TensorValue, current: str, desired: str) -> TensorValue:
@@ -132,7 +226,10 @@ def _output_labels_for_pair(lhs: str, rhs: str, final_output: str, others: list[
   future = set(final_output)
   for labels in others:
     future.update(labels)
-  return "".join(dict.fromkeys(label for label in lhs + rhs if label in future))
+  labels = "".join(dict.fromkeys(label for label in lhs + rhs if label in future))
+  if not others and all(label in final_output for label in labels):
+    return "".join(label for label in final_output if label in labels)
+  return labels
 
 
 def _broadcast_if_needed(
@@ -141,16 +238,7 @@ def _broadcast_if_needed(
   source_axis_sizes: dict[str, int],
   resolved_sizes: dict[str, int],
 ) -> TensorValue:
-  """Insert an `ops.broadcast_to` when the operand's per-axis sizes
-  differ from the resolved per-label sizes.
-
-  Permute alone gives us a tensor whose axes are in the right order
-  but whose extents still reflect this operand's original shape - if a
-  size-1 axis needs to broadcast against the other operand's size N,
-  the subsequent reshape into `(*B, m, k)` would fail. The check is
-  shape equality on the permuted view; only emit the op when broadcast
-  is actually required.
-  """
+  """Broadcast size-1 axes to resolved per-label sizes."""
   current_shape = [source_axis_sizes[label] for label in ordered_labels]
   target_shape = [resolved_sizes[label] for label in ordered_labels]
   if current_shape == target_shape:
@@ -160,25 +248,13 @@ def _broadcast_if_needed(
   return ops.broadcast_to(value, target_shape)
 
 
-def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
-  from max.graph import ops  # noqa: PLC0415
-
+def _pair_layout(lhs: _LabeledShape, rhs: _LabeledShape, out_labels: str, *, swapped: bool) -> _PairLayout:
   _reject_repeated_labels(lhs.labels)
   _reject_repeated_labels(rhs.labels)
 
   lhs_sizes = _label_sizes(lhs.labels, lhs.shape)
   rhs_sizes = _label_sizes(rhs.labels, rhs.shape)
-  sizes = dict(lhs_sizes)
-  for label, dim in rhs_sizes.items():
-    previous = sizes.get(label)
-    if previous is None or previous == dim:
-      sizes[label] = dim
-    elif previous == 1:
-      sizes[label] = dim
-    elif dim == 1:
-      continue
-    else:
-      raise ValueError(f"size conflict on label {label!r}: {previous} vs {dim}")
+  sizes = _merge_label_sizes(lhs_sizes, rhs_sizes)
 
   cls = _max_graph.classify_pair(lhs.labels, rhs.labels, out_labels)
   batch = "".join(cls.batch)
@@ -186,17 +262,49 @@ def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
   free_lhs = "".join(cls.free_lhs)
   free_rhs = "".join(cls.free_rhs)
 
-  lhs_order = batch + free_lhs + contract
-  rhs_order = batch + contract + free_rhs
-  lhs_value = _permute_if_needed(lhs.value, lhs.labels, lhs_order)
-  rhs_value = _permute_if_needed(rhs.value, rhs.labels, rhs_order)
-  lhs_value = _broadcast_if_needed(lhs_value, lhs_order, lhs_sizes, sizes)
-  rhs_value = _broadcast_if_needed(rhs_value, rhs_order, rhs_sizes, sizes)
+  return _PairLayout(
+    lhs=lhs,
+    rhs=rhs,
+    lhs_sizes=lhs_sizes,
+    rhs_sizes=rhs_sizes,
+    sizes=sizes,
+    batch=batch,
+    contract=contract,
+    free_lhs=free_lhs,
+    free_rhs=free_rhs,
+    lhs_order=batch + free_lhs + contract,
+    rhs_order=batch + contract + free_rhs,
+    natural_labels=batch + free_lhs + free_rhs,
+    swapped=swapped,
+  )
 
-  batch_shape = _sizes_for(batch, sizes)
-  m_shape = _sizes_for(free_lhs, sizes)
-  k_shape = _sizes_for(contract, sizes)
-  n_shape = _sizes_for(free_rhs, sizes)
+
+def _best_pair_layout(lhs: _LabeledShape, rhs: _LabeledShape, out_labels: str) -> _PairLayout:
+  normal = _pair_layout(lhs, rhs, out_labels, swapped=False)
+  swapped = _pair_layout(rhs, lhs, out_labels, swapped=True)
+  if normal.natural_labels != out_labels and swapped.natural_labels == out_labels:
+    return swapped
+  return normal
+
+
+def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
+  from max.graph import ops  # noqa: PLC0415
+
+  layout = _best_pair_layout(lhs, rhs, out_labels)
+  layout_lhs = layout.lhs
+  layout_rhs = layout.rhs
+  if not isinstance(layout_lhs, _Node) or not isinstance(layout_rhs, _Node):
+    raise TypeError("MAX lowering expected graph nodes")
+
+  lhs_value = _permute_if_needed(layout_lhs.value, layout_lhs.labels, layout.lhs_order)
+  rhs_value = _permute_if_needed(layout_rhs.value, layout_rhs.labels, layout.rhs_order)
+  lhs_value = _broadcast_if_needed(lhs_value, layout.lhs_order, layout.lhs_sizes, layout.sizes)
+  rhs_value = _broadcast_if_needed(rhs_value, layout.rhs_order, layout.rhs_sizes, layout.sizes)
+
+  batch_shape = _sizes_for(layout.batch, layout.sizes)
+  m_shape = _sizes_for(layout.free_lhs, layout.sizes)
+  k_shape = _sizes_for(layout.contract, layout.sizes)
+  n_shape = _sizes_for(layout.free_rhs, layout.sizes)
   m = _product(m_shape)
   k = _product(k_shape)
   n = _product(n_shape)
@@ -205,15 +313,162 @@ def _lower_pair(lhs: _Node, rhs: _Node, out_labels: str) -> _Node:
   rhs_value = _reshape(rhs_value, [*batch_shape, k, n])
   out = ops.matmul(lhs_value, rhs_value)
 
-  natural_labels = batch + free_lhs + free_rhs
   natural_shape = [*batch_shape, *m_shape, *n_shape]
   out = _reshape(out, natural_shape)
-  out = _permute_if_needed(out, natural_labels, out_labels)
+  out = _permute_if_needed(out, layout.natural_labels, out_labels)
   return _Node(
     value=out,
     labels=out_labels,
-    shape=tuple(_sizes_for(out_labels, sizes)),
+    shape=tuple(_sizes_for(out_labels, layout.sizes)),
   )
+
+
+def _broadcast_payload(
+  ordered_labels: str,
+  source_axis_sizes: dict[str, int],
+  resolved_sizes: dict[str, int],
+) -> dict[str, object] | None:
+  current_shape = [source_axis_sizes[label] for label in ordered_labels]
+  target_shape = [resolved_sizes[label] for label in ordered_labels]
+  if current_shape == target_shape:
+    return None
+  return {
+    "labels": ordered_labels,
+    "from_shape": current_shape,
+    "to_shape": target_shape,
+  }
+
+
+def _reduce_node_for_spec(node: _LoweringNode, keep: set[str]) -> tuple[_LoweringNode, dict[str, object] | None]:
+  _reject_repeated_labels(node.labels)
+  sizes = _label_sizes(node.labels, node.shape)
+  labels = "".join(label for label in node.labels if label in keep)
+  if labels == node.labels:
+    return node, None
+  return (
+    _LoweringNode(labels=labels, shape=tuple(_sizes_for(labels, sizes))),
+    {
+      "kind": "reduce_sum",
+      "src_labels": node.labels,
+      "dst_labels": labels,
+      "reduced_labels": [label for label in node.labels if label not in keep],
+    },
+  )
+
+
+def lowering_spec(
+  eq: str,
+  shapes: list[tuple[int, ...]],
+  path: list[tuple[int, ...]],
+) -> dict[str, object]:
+  """Return the executable MAX lowering without importing `max.graph`."""
+  inputs, final_output = _parse_equation(eq, shapes)
+  for labels in inputs:
+    _reject_repeated_labels(labels)
+
+  working = [_LoweringNode(labels=labels, shape=shape) for labels, shape in zip(inputs, shapes, strict=True)]
+  ops: list[dict[str, object]] = []
+
+  for step_idx, step in enumerate(path):
+    if len(step) == 1:
+      (idx,) = step
+      future = set(final_output)
+      for j, node in enumerate(working):
+        if j != idx:
+          future.update(node.labels)
+      reduced, payload = _reduce_node_for_spec(working[idx], future)
+      if payload is not None:
+        payload["step"] = step_idx
+        payload["operand"] = idx
+        payload["target_op"] = "max.graph.ops.sum + max.graph.ops.squeeze"
+        ops.append(payload)
+      working[idx] = reduced
+      continue
+
+    li, ri = step
+    lhs = working[li]
+    rhs = working[ri]
+    others = [node.labels for j, node in enumerate(working) if j not in (li, ri)]
+    out_labels = _output_labels_for_pair(lhs.labels, rhs.labels, final_output, others)
+    layout = _best_pair_layout(lhs, rhs, out_labels)
+
+    batch_shape = _sizes_for(layout.batch, layout.sizes)
+    m_shape = _sizes_for(layout.free_lhs, layout.sizes)
+    k_shape = _sizes_for(layout.contract, layout.sizes)
+    n_shape = _sizes_for(layout.free_rhs, layout.sizes)
+    m = _product(m_shape)
+    k = _product(k_shape)
+    n = _product(n_shape)
+    payload = {
+      "kind": "matmul",
+      "target_op": "max.graph.ops.matmul",
+      "step": step_idx,
+      "lhs": li,
+      "rhs": ri,
+      "swapped_operands": layout.swapped,
+      "lhs_labels": lhs.labels,
+      "rhs_labels": rhs.labels,
+      "out_labels": out_labels,
+      "matmul_lhs_labels": layout.lhs.labels,
+      "matmul_rhs_labels": layout.rhs.labels,
+      "batch": list(layout.batch),
+      "contract": list(layout.contract),
+      "free_lhs": list(layout.free_lhs),
+      "free_rhs": list(layout.free_rhs),
+      "lhs_order": layout.lhs_order,
+      "rhs_order": layout.rhs_order,
+      "natural_labels": layout.natural_labels,
+      "needs_output_transpose": layout.natural_labels != out_labels,
+      "bmm_shape": {
+        "batch": batch_shape,
+        "m": m,
+        "k": k,
+        "n": n,
+        "lhs": [*batch_shape, m, k],
+        "rhs": [*batch_shape, k, n],
+        "out": [*batch_shape, m, n],
+      },
+      "output_shape": _sizes_for(out_labels, layout.sizes),
+      "broadcasts": [
+        item
+        for item in (
+          _broadcast_payload(layout.lhs_order, layout.lhs_sizes, layout.sizes),
+          _broadcast_payload(layout.rhs_order, layout.rhs_sizes, layout.sizes),
+        )
+        if item is not None
+      ],
+    }
+    ops.append(payload)
+
+    out = _LoweringNode(labels=out_labels, shape=tuple(_sizes_for(out_labels, layout.sizes)))
+    for idx in sorted((li, ri), reverse=True):
+      del working[idx]
+    working.append(out)
+
+  if len(working) != 1:
+    raise ValueError(f"contraction path leaves {len(working)} tensors; expected 1")
+
+  result, payload = _reduce_node_for_spec(working[0], set(final_output))
+  if payload is not None:
+    payload["step"] = len(ops)
+    payload["operand"] = 0
+    payload["target_op"] = "max.graph.ops.sum + max.graph.ops.squeeze"
+    ops.append(payload)
+  if result.labels != final_output:
+    ops.append({
+      "kind": "transpose",
+      "target_op": "max.graph.ops.permute",
+      "step": len(ops),
+      "src_labels": result.labels,
+      "dst_labels": final_output,
+    })
+
+  return {
+    "inputs": list(inputs),
+    "output": final_output,
+    "ops": ops,
+    "result_shape": _sizes_for(final_output, _label_sizes(result.labels, result.shape)) if final_output else [],
+  }
 
 
 def _lower_graph(
@@ -225,9 +480,7 @@ def _lower_graph(
 ) -> Graph:
   from max.graph import DeviceRef, Graph, TensorType  # noqa: PLC0415
 
-  inputs, final_output = _parse_equation(eq)
-  if len(inputs) != len(shapes):
-    raise ValueError(f"equation has {len(inputs)} operands but got {len(shapes)} shapes")
+  inputs, final_output = _parse_equation(eq, shapes)
   for labels in inputs:
     _reject_repeated_labels(labels)
 
@@ -315,14 +568,7 @@ def _max_dtype_for(dtype: np.dtype) -> DType:
 
 
 def _input_buffer(arr: np.ndarray, device: Device) -> Buffer:
-  """Numpy -> MAX Buffer with a uint16 detour for bf16.
-
-  Numpy's DLPack export rejects ml_dtypes.bfloat16 (the bridge only
-  carries IEEE-recognised dtypes). bf16 and uint16 share a byte layout,
-  so we hand MAX the uint16 view and reinterpret the metadata as
-  bf16 on the MAX side. Round-trip-safe because no arithmetic happens
-  between the two views.
-  """
+  """NumPy -> MAX Buffer, with a uint16 view for bf16."""
   from max.driver import Buffer  # noqa: PLC0415
   from max.dtype import DType  # noqa: PLC0415
 

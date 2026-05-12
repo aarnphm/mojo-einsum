@@ -20,6 +20,7 @@ dependencies = ["numpy>=1.26"]
 
 [project.scripts]
 moeinsum-bench = "moeinsum.bench:main"
+moeinsum-lowering = "moeinsum.lowering:main"
 
 [project.optional-dependencies]
 max = ["max"]

@@ -11,8 +11,8 @@ Design notes:
     - `expand_ellipsis(eq, operand_ranks)` substitutes fresh labels in a
       separate pass once the operand ranks are known.
   - Missing output (`"ij,jk"` without `->`) follows NumPy's convention:
-    - output is the sorted unique labels that appear exactly once across
-      all inputs, with the ellipsis (if any) first.
+    - output is the sorted unique labels that appear exactly once across all
+      inputs, with the ellipsis (if any) first.
 
 Supported syntax:
   - basic            "ij,jk->ik"
@@ -24,15 +24,13 @@ Supported syntax:
   - transpose        "ij->ji"
   - whitespace inside the equation is stripped.
 
-Not handled here (in `plan.mojo` / `backends/reference.mojo`):
-  - shape validation (this only sees label structure, not shapes).
-  - size-1 broadcast (cross-operand `(1, N) -> N` resolution lives in
-    `_resolve_label_sizes`; the validator below only checks label
-    structure, not extents).
+Not handled here:
+  - shape validation,
+  - size-1 broadcast resolution,
+  - backend-specific lowering.
 """
 
-# `String`, `StringSlice`, `List`, `chr`, `ord` are in the Mojo prelude - no
-# imports needed for Mojo 1.0.0b1+.
+# `String`, `StringSlice`, `List`, `chr`, and `ord` are in the Mojo prelude.
 
 
 comptime ELLIPSIS_LABEL: Int = -1
@@ -44,16 +42,12 @@ struct EinsumEquation(Copyable, Movable):
     """Parsed einsum equation in canonical IR form.
 
     Fields:
-        inputs:               per-operand list of interned label sequences.
-                              `ELLIPSIS_LABEL` (= -1) marks an unexpanded
-                              ellipsis token; `expand_ellipsis` substitutes
-                              it for a list of fresh labels.
-        output:               output label sequence (same encoding).
-        n_labels:             count of distinct interned labels (updated by
-                              `expand_ellipsis` when new labels are added).
-        label_chars:          label int -> debug-display character (or a
-                              placeholder for ellipsis-expanded labels).
-        has_explicit_output:  True if the equation contained `->`.
+        inputs: per-operand interned label sequences. `ELLIPSIS_LABEL` marks an
+            unexpanded ellipsis token until `expand_ellipsis` substitutes it.
+        output: output label sequence in the same encoding.
+        n_labels: count of distinct interned labels.
+        label_chars: label int to debug-display character.
+        has_explicit_output: true if the equation contained `->`.
     """
 
     var inputs: List[List[Int]]
@@ -167,14 +161,14 @@ def parse(eq_in: String) raises -> EinsumEquation:
         output_part = String()
         has_explicit_output = False
 
-    # Intern ASCII labels. -2 = unassigned, -1 is ellipsis sentinel.
+    # Intern ASCII labels. -2 = unassigned, -1 is the ellipsis sentinel.
     var intern = List[Int]()
     for _ in range(128):
         intern.append(-2)
     var label_chars = List[String]()
 
-    # Tokenize each operand. `split` returns a list of StringSlices over
-    # `input_part`; copy each into a String for the helper.
+    # Tokenize each operand. `split` returns StringSlices over `input_part`;
+    # copy each into a String for the helper.
     var operand_slices = input_part.split(",")
     var inputs = List[List[Int]]()
     for i in range(len(operand_slices)):
@@ -182,7 +176,7 @@ def parse(eq_in: String) raises -> EinsumEquation:
         var labels = _tokenize_operand(op_string, intern, label_chars, i)
         inputs.append(labels^)
 
-    # Tokenize output (or compute implicit output).
+    # Tokenize output, or compute implicit output.
     var output = List[Int]()
     if has_explicit_output:
         output = _tokenize_operand(output_part, intern, label_chars, -1)
@@ -220,9 +214,9 @@ def expand_ellipsis(
 ) raises:
     """In-place substitute `ELLIPSIS_LABEL` with fresh labels.
 
-    Ellipsis width per operand = `operand_ranks[i] - explicit_label_count`.
-    For v0.1 we require all ellipses expand to the same width (no
-    broadcasting across mismatched ellipsis-rank).
+    Ellipsis width per operand is `operand_ranks[i] - explicit_label_count`.
+    v0.1 requires all ellipses to expand to the same width, so mismatched
+    ellipsis-rank broadcasting is rejected explicitly.
     """
     if len(operand_ranks) != eq.n_operands():
         raise Error(

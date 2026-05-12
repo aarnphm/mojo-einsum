@@ -1,19 +1,15 @@
 """Single-operand kernels.
 
 Implements the four unary ops a `UnaryStep` can describe:
-  - REDUCE_SUM   - sum out a set of axes.
-  - DIAGONAL     - repeated-label gather via stride summation.
-  - TRACE        - DIAGONAL followed by REDUCE_SUM.
-  - TRANSPOSE    - pure label permutation, layout-only (zero copy).
+  - REDUCE_SUM: sum out a set of axes.
+  - DIAGONAL: repeated-label gather via stride summation.
+  - TRACE: DIAGONAL followed by REDUCE_SUM.
+  - TRANSPOSE: pure label permutation, layout-only and zero-copy.
 
-These kernels operate on flat Float64 buffers with explicit shapes /
-strides (in elements). Same memory model as `reference.mojo` - the
-difference is we exploit structure to skip copies where possible.
-
-`diagonal_view` and `transpose_view` are pure-metadata: they return a
-new `ShapeStrides` describing the same underlying buffer with different
-axis interpretation. No data movement. `reduce_sum_axes` is the only
-op that needs to walk data and write an output buffer.
+These kernels operate on flat Float64 buffers with explicit shapes and element
+strides. `diagonal_view` and `transpose_view` are pure metadata: they describe
+the same underlying buffer with a different axis interpretation. `reduce_sum_axes`
+is the only op here that walks data and writes an output buffer.
 """
 
 from std.memory import UnsafePointer
@@ -30,6 +26,7 @@ struct ShapeStrides(Copyable, Movable):
 # ---------------------------------------------------------------------
 # TRANSPOSE - pure layout permutation, zero copy
 # ---------------------------------------------------------------------
+
 
 def transpose_view(
     in_shape: List[Int],
@@ -75,6 +72,7 @@ def transpose_view(
 # DIAGONAL - stride summation across repeated axes
 # ---------------------------------------------------------------------
 
+
 def diagonal_view(
     in_shape: List[Int],
     in_strides: List[Int],
@@ -96,7 +94,7 @@ def diagonal_view(
     the formula still holds; PyTorch's historical #21760 bug was
     forgetting this generality.
     """
-    # Which axes are "consumed" by being collapsed into another.
+    # Which axes are consumed by being collapsed into another.
     var collapsed = List[Bool]()
     var added_stride = List[Int]()
     for _ in range(len(in_shape)):
@@ -141,6 +139,7 @@ def diagonal_view(
 # REDUCE_SUM - walk and accumulate
 # ---------------------------------------------------------------------
 
+
 def reduce_sum_axes(
     in_ptr: UnsafePointer[Float64, MutAnyOrigin],
     in_shape: List[Int],
@@ -155,9 +154,9 @@ def reduce_sum_axes(
     output (the input with the reduced axes removed). `out_strides`
     are in elements for the output's row-major layout.
 
-    Two nested mixed-radix counters: outer over kept axes, inner over
-    reduced axes. SIMD vectorization across contiguous inner-reduce is
-    a P3 polish item - current form is correct on all stride patterns.
+    Two nested mixed-radix counters: outer over kept axes, inner over reduced
+    axes. SIMD vectorization across contiguous inner-reduce is a later polish
+    item; current form is correct for all stride patterns.
     """
     var is_reduce = List[Bool]()
     for _ in range(len(in_shape)):
@@ -221,6 +220,6 @@ def reduce_sum_axes(
             break
 
 
-# TRACE = diagonal_view -> reduce_sum_axes (NumPy / PyTorch pattern).
-# The backend composes these two steps from a single UnaryStep with both
-# `diag_axes` and `reduce_axes` populated. No separate trace kernel needed.
+# TRACE = diagonal_view -> reduce_sum_axes. The backend composes these two steps
+# from a single UnaryStep with both `diag_axes` and `reduce_axes` populated, so no
+# separate trace kernel is needed.

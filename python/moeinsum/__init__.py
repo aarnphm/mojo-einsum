@@ -1,17 +1,20 @@
 """moeinsum public Python API.
 
 For v0.1:
-  - `einsum(eq, *operands, backend, optimize, accum_dtype)` against
-    numpy ndarrays. The reference backend ships for full correctness;
-    `max` / `max:cpu` / `max:gpu` cover the BMM-lowerable subset through
-    MAX Graph (`max_graph` is a compatibility alias).
+  - `einsum(eq, *operands, backend, optimize, accum_dtype)` accepts
+    numpy ndarrays and DLPack-capable framework arrays. The reference
+    backend ships for full correctness; `max` / `max:cpu` / `max:gpu`
+    cover the BMM-lowerable subset through MAX Graph (`max_graph` is a
+    compatibility alias).
   - `einsum_path(eq, *shapes, optimize)` returns the contraction pair
     sequence the planner chose.
   - `parse_equation(eq)` is a debugging surface that returns the IR.
   - Per-signature LRU cache short-circuits parse + path planning on
     hot calls (see `_cache.py`).
 
-DLPack zero-copy + JAX/PyTorch/MLX interop arrives in P8.
+The remaining zero-copy work is send-side DLPack into the Mojo
+TileTensor backend; receive/return interop already preserves dtype and
+framework where supported.
 """
 
 from __future__ import annotations
@@ -51,9 +54,10 @@ __all__ = [
 
 
 _BACKENDS = ("reference", "max", "max:cpu", "max:gpu", "max_graph")
-# Backends in the plan that have a skeleton but aren't wired through the
-# FFI yet - used to produce phase-aware error messages instead of an
-# opaque "unknown backend" string when callers try them.
+# Backends in the plan that have a skeleton but are not wired through the
+# FFI yet. Keep this separate from the unknown-backend error so callers
+# get a phase-aware "not implemented" message instead of a generic typo
+# surface.
 _PLANNED_BACKENDS = {
   "native": "P11/P12 - SIMD-tiled CPU GETT + SM90 WGMMA. Skeleton at src/einsum/backends/native.mojo.",
 }
@@ -201,12 +205,10 @@ def einsum(
                    torch.einsum convention).
       deterministic: When True (default), reductions run in a fixed
                    left-to-right order so repeat calls are bit-identical.
-                   The reference backend is always deterministic;
-                   `MaxBackend` (P5) and `NativeBackend` (P11/P12) honor
-                   this flag by serializing the reduction tree (slower)
-                   when set. Setting `deterministic=False` permits a
-                   parallel tree-reduction once those backends ship  -
-                   bit-equality is not guaranteed across runs.
+                   The reference backend is always deterministic.
+                   Optimized backends still need a real deterministic
+                   lowering before this flag means bitwise repeatability
+                   outside the reference path.
 
   Returns:
       The contraction result in the framework chosen by `return_type`
@@ -216,8 +218,8 @@ def einsum(
     raise TypeError(f"deterministic must be bool, got {type(deterministic).__name__}")
   if accum_dtype is not None:
     # Resolve up-front so a typo raises here instead of inside the FFI.
-    # Real low-precision accumulation lands with MaxBackend; today we
-    # validate the dtype is known but always accumulate in fp64.
+    # Real low-precision accumulation lands with MaxBackend/native; today
+    # we validate the dtype is known while reference still accumulates in fp64.
     try:
       np.dtype(accum_dtype)
     except TypeError as exc:
@@ -228,8 +230,8 @@ def einsum(
     raise ValueError(f"unknown backend {backend!r}; available: {_BACKENDS}")
   if _is_explicit_path(optimize):
     # Validate eagerly so callers get a clear error. The reference backend
-    # ignores path order (it's a global-index loop), so we don't plumb the
-    # explicit path through; the validation is the only side-effect for v0.1.
+    # ignores path order (it is a global-index loop), so validation is the
+    # only side-effect for v0.1 unless an optimized backend consumes the path.
     _validate_explicit_path(cast("Sequence[Sequence[int]]", optimize), len(operands))
   elif not _is_known_optimize(cast("str", optimize)):
     raise ValueError(f"unknown optimize {optimize!r}; available: {_OPTIMIZE}")
@@ -238,9 +240,9 @@ def einsum(
     raise ValueError("einsum requires at least one operand")
 
   # Lift every operand to a contiguous numpy view via DLPack-first.
-  # We *preserve* dtype here so `result_type` reflects what the user
-  # passed; the fp64 conversion is a reference-backend FFI detail that
-  # we apply at the kernel boundary, not at the API surface.
+  # Preserve dtype here so `result_type` reflects what the user passed;
+  # the fp64 conversion is a reference-backend FFI detail applied at the
+  # kernel boundary, not at the API surface.
   arrays = [_to_numpy(o) for o in operands]
 
   if dtype is None:
@@ -309,8 +311,8 @@ def einsum_path(
   cached = PLAN_CACHE.get(key)
   if cached is not None:
     # Hand back a fresh list - the path tuples are immutable, but the
-    # outer container is not, so we don't want a caller's `path.append(...)`
-    # to pollute the next cache hit.
+    # outer container is not, so we do not want a caller's
+    # `path.append(...)` to pollute the next cache hit.
     return list(cast("list[tuple[int, ...]]", cached))
 
   shapes_lists = [list(s) for s in operand_shapes]
