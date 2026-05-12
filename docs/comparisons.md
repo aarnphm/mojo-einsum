@@ -34,20 +34,20 @@ date: 2026/05/10
 
 ## Performance
 
-| Workload                                    | moeinsum vs. peer                                                                                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Matmul-shaped (`ij,jk->ik`, `bij,bjk->bik`) | Executable through MAX Graph today; committed cross-platform ratios still pending                                               |
-| Multi-operand chains (`ij,jk,kl,lm->im`)    | Matches JAX + opt_einsum path recurrence; each pairwise step lowers through native MAX CPU or MAX Graph depending on placement  |
-| Irregular permutes                          | TTGT today on `max` backend, matching PyTorch/JAX; cuTENSOR GETT wins ~1.5-3x. `native` P11/P12 closes this.                    |
-| Tensor networks (n > 20)                    | Use cotengra for hypergraph path search; opt_einsum greedy is not enough for these cases                                        |
-| Call-site overhead (hot cache)              | P7 plan cache removes repeated parse / planning cost; benchmark CLI emits ratios against numpy / opt_einsum / jax / torch / mlx |
+| Workload                                    | moeinsum vs. peer                                                                                                                                  |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Matmul-shaped (`ij,jk->ik`, `bij,bjk->bik`) | Executable through MAX Graph today; committed cross-platform ratios still pending                                                                  |
+| Multi-operand chains (`ij,jk,kl,lm->im`)    | Matches JAX + opt_einsum path recurrence; each pairwise step lowers through native MAX CPU/GPU pointer entries or MAX Graph depending on placement |
+| Irregular permutes                          | TTGT today on `max` backend, matching PyTorch/JAX; cuTENSOR GETT wins ~1.5-3x. `native` P11/P12 closes this.                                       |
+| Tensor networks (n > 20)                    | Use cotengra for hypergraph path search; opt_einsum greedy is not enough for these cases                                                           |
+| Call-site overhead (hot cache)              | P7 plan cache removes repeated parse / planning cost; benchmark CLI emits ratios against numpy / opt_einsum / jax / torch / mlx                    |
 
 ## Gaps
 
 - **No cotengra equivalent.** Tensor-network workloads compute the path externally. opt_einsum's family covers the current ML-shaped target cases; quantum-circuit simulation needs cotengra.
 - **No optimized GETT yet.** Kernel work remains post-v0.1. Awkward permutes go through flat-buffer/native or TTGT-style MAX lowering until then.
 - **MAX diagonal lowering is explicit.** The executable MAX Graph path lowers repeated labels through `gather_nd`, so trace / diagonal cases now run there. It is a materializing graph op today, while the Mojo native path can still become a stride-only view in the GETT cutover.
-- **Low precision is backend-limited.** bf16 is covered on the MAX paths with dtype round-trip. Graph execution uses fp32 accumulation; native MAX CPU currently stages through the flat fp64 ABI. fp16, fp8 (e4m3, e5m2), and opcode-level accumulator control wait on dtype-specialized Mojo TileTensor/native kernels.
+- **Low precision is backend-limited.** bf16 is covered on the MAX Graph paths with dtype round-trip. Graph execution uses fp32 accumulation; native MAX pointer entries currently cover fp32/fp64. fp16, bf16-native, fp8 (e4m3, e5m2), and opcode-level accumulator control wait on dtype-specialized Mojo TileTensor/native kernels.
 - **No autograd.** PyTorch and JAX wrap einsum with autograd; moeinsum is a primitive.
 
 ## Project seams

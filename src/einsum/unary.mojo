@@ -6,7 +6,7 @@ Implements the four unary ops a `UnaryStep` can describe:
   - TRACE: DIAGONAL followed by REDUCE_SUM.
   - TRANSPOSE: pure label permutation, layout-only and zero-copy.
 
-These kernels operate on flat Float64 buffers with explicit shapes and element
+These kernels operate on flat scalar buffers with explicit shapes and element
 strides. `diagonal_view` and `transpose_view` are pure metadata: they describe
 the same underlying buffer with a different axis interpretation. `reduce_sum_axes`
 is the only op here that walks data and writes an output buffer.
@@ -141,12 +141,14 @@ def diagonal_view(
 # ---------------------------------------------------------------------
 
 
-def reduce_sum_axes(
-    in_ptr: UnsafePointer[Float64, MutAnyOrigin],
+def reduce_sum_axes[
+    dtype: DType,
+](
+    in_ptr: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     in_shape: List[Int],
     in_strides: List[Int],
     reduce_axes: List[Int],
-    out_ptr: UnsafePointer[Float64, MutAnyOrigin],
+    out_ptr: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     out_strides: List[Int],
 ) raises:
     """Sum the input over `reduce_axes`, writing into `out_ptr`.
@@ -182,7 +184,7 @@ def reduce_sum_axes(
         var red_idx = List[Int]()
         for _ in range(len(reduce_axes)):
             red_idx.append(0)
-        var acc: Float64 = 0.0
+        var acc = Scalar[dtype](0)
         while True:
             var in_off: Int = 0
             var kc: Int = 0

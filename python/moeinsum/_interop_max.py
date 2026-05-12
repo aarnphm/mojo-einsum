@@ -1,24 +1,32 @@
 """MAX backend interop for public Python dispatch.
 
 `max:cpu` routes through the native Mojo MAX TileTensor backend exposed by
-`_native`. `max:gpu`, explicit graph introspection, and graph cache tests still
-use the MAX Graph lowering in this module.
+`_native`. `max:gpu` lazily imports `_native_gpu` for typed pointer payloads
+when that extension is built. Explicit graph introspection and graph cache
+tests still use the MAX Graph lowering in this module.
 """
 
 from __future__ import annotations
 
 import os
 from collections import OrderedDict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from math import prod
 from threading import RLock
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import ml_dtypes
 import numpy as np
 
-from ._native import einsum_max_cpu as _einsum_max_cpu_native
+from ._native import einsum_max_f32_cpu_ptrs as _einsum_max_f32_cpu_ptrs_native
+from ._native import einsum_max_f64_cpu_ptrs as _einsum_max_f64_cpu_ptrs_native
 from ._native import parse_equation_expanded as _parse_equation_expanded_native
+
+if TYPE_CHECKING:
+  from max.engine import InferenceSession, Model
+  from max.graph import DeviceRef, Graph, TensorType, TensorValue, ops
 
 
 def _prefer_packaged_modular_runtime() -> None:
@@ -32,8 +40,38 @@ _prefer_packaged_modular_runtime()
 
 from max.driver import CPU, Accelerator, Buffer, Device, accelerator_count  # noqa: E402
 from max.dtype import DType  # noqa: E402
-from max.engine import InferenceSession, Model  # noqa: E402
-from max.graph import DeviceRef, Graph, TensorType, TensorValue, ops  # noqa: E402
+
+_MAX_GRAPH_LOADED = False
+
+
+def _ensure_max_graph_loaded() -> None:
+  global DeviceRef, Graph, InferenceSession, TensorType, ops
+  global _MAX_GRAPH_LOADED
+  if _MAX_GRAPH_LOADED:
+    return
+  from max.engine import InferenceSession as _InferenceSession  # noqa: PLC0415
+  from max.graph import DeviceRef as _DeviceRef  # noqa: PLC0415
+  from max.graph import Graph as _Graph  # noqa: PLC0415
+  from max.graph import TensorType as _TensorType  # noqa: PLC0415
+  from max.graph import ops as _ops  # noqa: PLC0415
+
+  DeviceRef = _DeviceRef
+  Graph = _Graph
+  InferenceSession = _InferenceSession
+  TensorType = _TensorType
+  ops = _ops
+  _MAX_GRAPH_LOADED = True
+
+
+_NativeMaxEntrypoint = Callable[[str, dict[str, object], list[tuple[int, ...]]], None]
+_NATIVE_MAX_CPU: dict[str, _NativeMaxEntrypoint] = {
+  "float32": _einsum_max_f32_cpu_ptrs_native,
+  "float64": _einsum_max_f64_cpu_ptrs_native,
+}
+_NATIVE_MAX_GPU_NAMES = {
+  "float32": "einsum_max_f32_gpu_ptrs",
+  "float64": "einsum_max_f64_gpu_ptrs",
+}
 
 
 @dataclass(frozen=True)
@@ -504,6 +542,7 @@ def _lower_graph(
   accum_dtype: DType,
   device: Device,
 ) -> Graph:
+  _ensure_max_graph_loaded()
   inputs, final_output = _parse_equation(eq, shapes)
 
   input_types = [TensorType(dtype, shape=shape, device=DeviceRef.from_device(device)) for shape in shapes]
@@ -640,18 +679,95 @@ def _read_output(buf: Buffer) -> np.ndarray:
   return host.to_numpy()
 
 
-def _execute_max_mojo_cpu(
+def _row_major_strides(shape: Sequence[int]) -> list[int]:
+  rank = len(shape)
+  if rank == 0:
+    return []
+  strides = [0] * rank
+  strides[-1] = 1
+  for axis in range(rank - 2, -1, -1):
+    strides[axis] = strides[axis + 1] * int(shape[axis + 1])
+  return strides
+
+
+def _native_max_cpu_func(dtype: np.dtype) -> _NativeMaxEntrypoint | None:
+  return _NATIVE_MAX_CPU.get(np.dtype(dtype).name)
+
+
+def _native_max_gpu_func(dtype: np.dtype) -> _NativeMaxEntrypoint | None:
+  func_name = _NATIVE_MAX_GPU_NAMES.get(np.dtype(dtype).name)
+  if func_name is None:
+    return None
+  try:
+    module = import_module("._native_gpu", __package__)
+  except ModuleNotFoundError as exc:
+    if exc.name == f"{__package__}._native_gpu":
+      return None
+    raise
+  return cast("_NativeMaxEntrypoint", getattr(module, func_name))
+
+
+def _rank_preserving_contiguous(array: np.ndarray) -> np.ndarray:
+  if array.shape == ():
+    return array
+  return np.ascontiguousarray(array)
+
+
+def _native_input_buffer(
+  array: np.ndarray,
+  dtype: np.dtype,
+  device: Device,
+) -> tuple[np.ndarray, Buffer]:
+  host_array = _rank_preserving_contiguous(array.astype(dtype, copy=False))
+  return host_array, Buffer.from_dlpack(host_array).to(device)
+
+
+def _native_output_buffer(shape: tuple[int, ...], dtype: DType, device: Device) -> Buffer:
+  if shape:
+    return Buffer.zeros(shape, dtype, device=device)
+  return Buffer.scalar(0, dtype, device=device)
+
+
+def _result_shape(eq: str, arrays: list[np.ndarray], path: list[tuple[int, ...]]) -> tuple[int, ...]:
+  spec = lowering_spec(eq, [tuple(array.shape) for array in arrays], path)
+  return tuple(cast("list[int]", spec["result_shape"]))
+
+
+def _native_payload(inputs: list[Buffer], output: Buffer) -> dict[str, object]:
+  input_shapes = [list(buffer.shape) for buffer in inputs]
+  return {
+    "operand_ptrs": [buffer._data_ptr() for buffer in inputs],
+    "operand_shapes": input_shapes,
+    "operand_strides": [_row_major_strides(shape) for shape in input_shapes],
+    "operand_numels": [buffer.num_elements for buffer in inputs],
+    "out_ptr": output._data_ptr(),
+    "out_shape": list(output.shape),
+    "out_strides": _row_major_strides(output.shape),
+  }
+
+
+def _execute_max_native(
   eq: str,
   arrays: list[np.ndarray],
   path: list[tuple[int, ...]],
+  device: Device,
+  func: _NativeMaxEntrypoint,
 ) -> np.ndarray:
   dtype = np.result_type(*arrays)
-  _max_dtype_for(dtype)
+  max_dtype = _max_dtype_for(dtype)
+  output_shape = _result_shape(eq, arrays, path)
 
-  flats = [array.astype(np.float64).ravel().tolist() for array in arrays]
-  shapes = [list(array.shape) for array in arrays]
-  flat_out, out_shape = _einsum_max_cpu_native(eq, flats, shapes, path)
-  out = np.array(flat_out, dtype=np.float64).reshape(tuple(out_shape))
+  host_arrays: list[np.ndarray] = []
+  input_buffers: list[Buffer] = []
+  for array in arrays:
+    host_array, buffer = _native_input_buffer(array, np.dtype(dtype), device)
+    host_arrays.append(host_array)
+    input_buffers.append(buffer)
+
+  output = _native_output_buffer(output_shape, max_dtype, device)
+  func(eq, _native_payload(input_buffers, output), path)
+  device.synchronize()
+  out = _read_output(output)
   if out.dtype != dtype:
     out = out.astype(dtype)
   return out
@@ -703,10 +819,27 @@ def execute_max(
   backend: str,
   accum_dtype: np.dtype | None = None,
 ) -> np.ndarray:
-  if backend == "max:cpu" and accum_dtype is None:
-    return _execute_max_mojo_cpu(eq, arrays, path)
-  if backend == "max" and accum_dtype is None and accelerator_count() == 0:
-    return _execute_max_mojo_cpu(eq, arrays, path)
+  dtype = np.result_type(*arrays)
+  if accum_dtype is None:
+    if backend == "max:cpu":
+      native_cpu = _native_max_cpu_func(dtype)
+      if native_cpu is not None:
+        return _execute_max_native(eq, arrays, path, CPU(), native_cpu)
+    if backend == "max:gpu":
+      native_gpu = _native_max_gpu_func(dtype)
+      if native_gpu is not None:
+        if accelerator_count() == 0:
+          raise RuntimeError("backend='max:gpu' requested but MAX reports no accelerator")
+        return _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+    if backend == "max":
+      if accelerator_count() > 0:
+        native_gpu = _native_max_gpu_func(dtype)
+        if native_gpu is not None:
+          return _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+      else:
+        native_cpu = _native_max_cpu_func(dtype)
+        if native_cpu is not None:
+          return _execute_max_native(eq, arrays, path, CPU(), native_cpu)
   return _execute_max_graph(eq, arrays, path, backend, accum_dtype)
 
 

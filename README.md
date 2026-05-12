@@ -30,8 +30,8 @@ to force.
 - **Plan IR** (`plan.mojo`): backend-agnostic `ContractionPlan` with B/K/M/N classification per JAX's `_einsum`.
 - **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `branch`, `random-greedy`, and `auto` algorithms.
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
-- **MAX Graph backend** (`python/moeinsum/_interop_max.py`): executable `backend="max[:cpu|gpu]"` for the shipped equation grammar, including ellipsis, size-1 broadcast, diagonal / trace, unary transpose, reduce-sum, and matmul-shaped pairwise steps.
-- **Mojo MAX backend seam** (`backends/max.mojo`): consumes `ContractionPlan`, packs flat runtime-strided operands into BMM-shaped `TileTensor` buffers, and lowers pairwise steps through `linalg.bmm.batched_matmul`.
+- **MAX interop backend** (`python/moeinsum/_interop_max.py`): routes native fp32/fp64 `max:cpu` through borrowed MAX Buffer pointers, lazily imports the native GPU extension when available, and keeps MAX Graph for graph introspection, accumulator casts, and unsupported native dtypes.
+- **Mojo MAX backend seam** (`backends/max.mojo`): consumes `ContractionPlan`, packs runtime-strided operands into BMM-shaped `TileTensor` buffers, and lowers pairwise steps through `linalg.bmm.batched_matmul`.
 - **Native backend** (`backends/native.mojo`): executable Mojo flat-buffer plan executor for the full grammar, with SIMD/GPU GETT kernel cutover pending.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
 - **Python API**: `einsum`, `einsum_path`, `parse_equation` over numpy / torch / jax / mlx / anything with `__dlpack__`. Per-signature LRU cache.
@@ -93,7 +93,7 @@ We create a small plan IR so each backend can decide how to consume it.
 - A backend consumes the plan and decides how each step executes
   - the `reference` backend uses a naive global-index loop
   - `max` builds a MAX Graph over pairwise batched-matmul lowerings;
-  - the Mojo MAX backend seam packs the current flat-buffer ABI into `TileTensor` BMM calls;
+  - the Mojo MAX backend seam packs runtime-strided pointer operands into `TileTensor` BMM calls;
   - `native` runs the Mojo flat-buffer plan executor today, then swaps in SIMD/GPU kernels with GETT-style fused permute.
 
 See [[derivations#1. The BMM lowering|BMM lowering section]] for proof.

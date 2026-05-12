@@ -53,7 +53,7 @@ Hand-authored + JAX corpus + hypothesis clears $\ge 150$.
 
 > Matmul-shaped einsums within 5% of direct `linalg.batched_matmul` on the same shapes.
 
-Status: **shipped** across two executable paths. Public `backend="max:cpu"` now calls the Mojo MAX TileTensor backend through `_native.einsum_max_cpu`; `backend="max"` still uses MAX Graph when MAX reports an accelerator. The graph interop perf tests keep the raw `max.graph.ops.matmul` comparison pinned, while the public CPU parity tests pin the TileTensor cutover.
+Status: **shipped** across native CPU and graph executable paths, with a lazy native GPU export added for accelerator hosts. Public `backend="max:cpu"` now calls the Mojo MAX TileTensor backend through typed pointer payload entries (`_native.einsum_max_f32_cpu_ptrs` / `_native.einsum_max_f64_cpu_ptrs`). `backend="max"` tries `_native_gpu` on accelerator hosts when that extension is built, then falls through to MAX Graph. The graph interop perf tests keep the raw `max.graph.ops.matmul` comparison pinned, while the public CPU parity tests pin the TileTensor cutover.
 
 | Where                                                                                        | Scope                                                                                                                                     |
 | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |

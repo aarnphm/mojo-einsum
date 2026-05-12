@@ -3,70 +3,85 @@ title: FFI design for max backend
 date: 2026/05/11
 ---
 
-P5 now has two executable layers. Public `backend="max:cpu"` enters the Mojo MAX
-backend through `_native.einsum_max_cpu`. The Python MAX Graph backend remains
-the accelerator path for `max` / `max:gpu`, the graph-introspection path, and
-the accumulator-dtype path. The Mojo MAX backend in
+P5 now has three executable MAX layers. Public `backend="max:cpu"` enters the
+Mojo MAX backend through `_native.einsum_max_f32_cpu_ptrs` or
+`_native.einsum_max_f64_cpu_ptrs`. Public `backend="max:gpu"` lazily imports
+`_native_gpu` and uses the same pointer payload for native fp32/fp64 accelerator
+execution when that module is built. The Python MAX Graph backend remains the
+graph-introspection path, the accumulator-dtype path, and the fallback for
+unsupported native dtypes. The Mojo MAX backend in
 `src/einsum/backends/max.mojo` consumes `ContractionPlan`, packs
 runtime-strided operands into BMM-shaped `TileTensor` buffers, and calls
 `linalg.bmm.batched_matmul` for pairwise steps.
 
-The remaining FFI rewire matters because P11 (native CPU GETT), P12 (native
-GPU SM90), deterministic low-precision controls, and zero-copy device ownership
-all want `TileTensor` over an unowned pointer instead of Python-side NumPy
-buffers.
+The current FFI boundary borrows MAX `Buffer` storage created from DLPack
+producers. Python owns lifetime and device placement; Mojo receives typed data
+pointers, shape lists, stride lists, output pointer, and a working-set path.
 
 ## Today's FFI surface
 
-`src/lib.mojo` exposes eight `PythonModuleBuilder` entries:
+`src/lib.mojo` exposes nine `PythonModuleBuilder` entries:
 
-| Function                        | Operand contract                | Return                       |
-| ------------------------------- | ------------------------------- | ---------------------------- |
-| `parse_equation(eq)`            | pure equation parse             | `dict[str, object]`          |
-| `parse_equation_expanded(eq)`   | equation + operand shape ranks  | `dict[str, object]`          |
-| `einsum_reference(eq, fl, sh)`  | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
-| `einsum_native(eq, fl, sh, p)`  | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
-| `einsum_max_cpu(eq, fl, sh, p)` | flat fp64 buffers + shape lists | `(flat_out_fp64, out_shape)` |
-| `einsum_path(eq, sh)`           | shape lists                     | `list[tuple[int, ...]]`      |
-| `einsum_compute_path(eq, ...)`  | shape lists + algorithm name    | `list[tuple[int, ...]]`      |
-| `path_cost(eq, sh, p)`          | shape lists + working-set path  | `dict[str, object]`          |
+| Function                                  | Operand contract                      | Return                       |
+| ----------------------------------------- | ------------------------------------- | ---------------------------- |
+| `parse_equation(eq)`                      | pure equation parse                   | `dict[str, object]`          |
+| `parse_equation_expanded(eq)`             | equation + operand shape ranks        | `dict[str, object]`          |
+| `einsum_reference(eq, fl, sh)`            | flat fp64 buffers + shape lists       | `(flat_out_fp64, out_shape)` |
+| `einsum_native(eq, fl, sh, p)`            | flat fp64 buffers + shape lists       | `(flat_out_fp64, out_shape)` |
+| `einsum_max_f32_cpu_ptrs(eq, payload, p)` | borrowed fp32 pointers + shape/stride | `None`                       |
+| `einsum_max_f64_cpu_ptrs(eq, payload, p)` | borrowed fp64 pointers + shape/stride | `None`                       |
+| `einsum_path(eq, sh)`                     | shape lists                           | `list[tuple[int, ...]]`      |
+| `einsum_compute_path(eq, ...)`            | shape lists + algorithm name          | `list[tuple[int, ...]]`      |
+| `path_cost(eq, sh, p)`                    | shape lists + working-set path        | `dict[str, object]`          |
 
-`einsum_reference`, `einsum_native`, and `einsum_max_cpu` allocate an
-`UnsafePointer[Float64]` per operand and memcpy the Python list in. End-to-end
-ownership makes that fine for the reference backend. For MAX CPU it is a
-temporary proof of routing; the graph path still builds a `max.graph.Graph` in
-Python, then feeds MAX `Buffer` objects.
+`src/native_gpu.mojo` exposes `_native_gpu.einsum_max_f32_gpu_ptrs` and
+`_native_gpu.einsum_max_f64_gpu_ptrs`. It is an optional extension source, not a
+default `mohaus` module, because macOS CPU wheel builds otherwise instantiate
+the GPU specialization and hit the local Metal compiler. The Python module is
+imported only when native accelerator execution is requested, which keeps the
+CPU extension from instantiating GPU specializations.
 
-`src/einsum/backends/max.mojo` now proves the Mojo-side lowering shape, but it
-still receives flat `UnsafePointer[Float64]` buffers. That copy becomes a
-per-call tax on buffers the caller already owns through DLPack. The next FFI
-boundary should let the caller's pointer land inside a `TileTensor` directly.
+Optional accelerator-host build shape:
 
-## Current flat FFI entry - `einsum_max_cpu_py`
-
-`src/lib.mojo` currently exposes `einsum_max_cpu(eq, operands_flat, operand_shapes, path)` to Python. It reuses the native parser and planner, expands ellipsis from operand ranks, builds a `ContractionPlan`, stages row-major `Float64` buffers, and calls `src/einsum/backends/max.mojo::execute_max[target="cpu"]`.
-
-That flat-list ABI is intentionally temporary. It proves the public `backend="max:cpu"` route reaches the Mojo MAX TileTensor backend, but it still pays Python list marshalling and fp64 staging costs. The zero-copy path below is the real performance ABI.
-
-## Future FFI entry - `einsum_max_py`
-
-```mojo
-def einsum_max_py(
-    eq_obj: PythonObject,
-    operand_caps_obj: PythonObject,    # list[capsule] - DLPack v1 tensors
-    operand_shapes_obj: PythonObject,
-    operand_strides_obj: PythonObject,
-    operand_dtypes_obj: PythonObject,  # list[str] - "float32", "bfloat16", ...
-    optimize_obj: PythonObject,
-    backend_obj: PythonObject,         # "max" | "max:gpu" | ...
-    accum_dtype_obj: PythonObject,
-) raises -> PythonObject
+```bash
+target="${MOEINSUM_NATIVE_GPU_TARGET:-sm_90}"
+suffix="$("$VENV/bin/python" - <<'PY'
+import sysconfig
+print(sysconfig.get_config_var("EXT_SUFFIX"))
+PY
+)"
+"$VENV/bin/mojo" build --emit shared-lib \
+  --target-accelerator "$target" \
+  -o "python/moeinsum/_native_gpu${suffix}" \
+  -I src \
+  src/native_gpu.mojo
 ```
 
-Capsule-first means numpy / torch / jax / mlx fall out symmetrically.
-The public input adapter already uses DLPack opportunistically on the
-Python side; the missing piece is a send-side capsule path that can cross
-the Mojo boundary without detouring through NumPy host buffers.
+`einsum_reference` and `einsum_native` still allocate `UnsafePointer[Float64]`
+buffers from Python lists. The MAX path no longer does. `_interop_max.py` creates
+MAX `Buffer` objects through `Buffer.from_dlpack(...)`, allocates an output
+`Buffer`, then passes `_data_ptr()` values through the typed native entrypoint.
+
+## Native MAX pointer payload
+
+Python sends a single payload dictionary:
+
+```python
+payload = {
+    "operand_ptrs": [buffer._data_ptr(), ...],
+    "operand_shapes": [[...], ...],
+    "operand_strides": [[...], ...],
+    "operand_numels": [buffer.num_elements, ...],
+    "out_ptr": output._data_ptr(),
+    "out_shape": [...],
+    "out_strides": [...],
+}
+```
+
+The Mojo helper `src/einsum/max_ffi.mojo::execute_max_ptr_payload` reuses the
+native parser and planner, expands ellipsis from operand ranks, validates pointer
+payload sizes, builds a `ContractionPlan`, and calls
+`src/einsum/backends/max.mojo::execute_max[dtype=..., target=...]`.
 
 ## `TileTensor` handoff
 
@@ -107,13 +122,12 @@ BMM-natural output order match `out_labels` and elides step 4.
 
 ## Unary-step lowering
 
-`src/einsum/unary.mojo` already implements the kernels. The change is
-plumbing - accept `TileTensor` instead of `(UnsafePointer, shape, stride)`:
+`src/einsum/unary.mojo` already implements the kernels. The current MAX native
+path accepts typed borrowed pointers plus runtime shape/stride lists:
 
 - `transpose_view` - new `Layout`, no kernel
 - `diagonal_view` - new `Layout` with stride summation, no kernel
-- `reduce_sum_axes` - read from `tile.ptr()` / `tile.layout`, dispatch the
-  existing SIMD reduce
+- `reduce_sum_axes[dtype]` - read from typed pointer + runtime strides
 - `trace` = `diagonal_view` $\circ$ `reduce_sum_axes`
 
 ## Build-config note
@@ -140,30 +154,10 @@ env MODULAR_PATH= MODULAR_DERIVED_PATH= \
 
 `python/moeinsum/__init__.py` already takes a `backend` parameter. Today,
 `backend.startswith("max")` dispatches to `_interop_max.execute_max`.
-That function routes `backend="max:cpu"` without `accum_dtype` through the
-flat native FFI entry, routes `backend="max"` to the same native CPU path
-only when MAX reports no accelerator, and keeps MAX Graph for `max:gpu`,
-accelerator-backed `max`, graph introspection, and explicit accumulator
-dtype requests.
-
-The future capsule cutover replaces the flat-list call with the FFI entry
-above:
-
-```python
-_BACKENDS = ("reference", "native", "max", "max:cpu", "max:gpu")
-
-if backend == "max":
-    return _einsum_max_native(
-        eq,
-        [_to_dlpack(o) for o in operands],
-        [list(o.shape) for o in operands],
-        [list(o.strides) for o in operands],
-        [str(o.dtype) for o in operands],
-        optimize_str,
-        target_or_default,
-        accum_dtype_str,
-    )
-```
+That function routes native fp32/fp64 calls with `accum_dtype is None` through
+the pointer payload ABI. `max:cpu` uses `_native`; `max:gpu` and accelerator-backed
+`max` try `_native_gpu`; unsupported native dtypes and explicit accumulator
+requests go through MAX Graph.
 
 Behavioral contract: unsupported MAX cases raise `NotImplementedError`;
 they do not silently fall back to reference.
@@ -185,33 +179,33 @@ Graph interop route:
   on the explicit graph interop executor, since public `max:cpu` now enters
   the Mojo TileTensor backend.
 - `tests/python/test_property.py` remains the broad parser / planner /
-  reference invariant suite. The zero-copy MAX FFI should join that parity
-  matrix once the flat-list ABI is gone.
+  reference invariant suite. Native MAX parity should join the broad property
+  matrix once the pointer ABI has GPU coverage.
 
 ## Phase ladder
 
 **Mojo TileTensor MAX cutover:**
 
 1. Packed pairwise lowering in `src/einsum/backends/max.mojo`: done.
-2. Flat `einsum_max_cpu_py` in `src/lib.mojo`: done. Future work replaces it
-   with capsule-backed `einsum_max_py` plus the rank monomorphization block.
+2. Flat `einsum_max_cpu_py` removed; fp32/fp64 pointer payload entries in
+   `_native` and `_native_gpu`: done.
 3. Replace packed TTGT staging with zero-copy `RuntimeLayout` / `TileTensor`
    views when operand strides can express the B/M/K and B/K/N layouts.
-4. Add dtype-specialized entry points instead of the current fp64-only flat ABI.
-5. Thread the existing Mojo `target` parameter through `einsum_max_py` so
-   `backend="max:gpu"` can instantiate `execute_max[target="gpu"]`.
+4. Add bf16/fp16 dtype-specialized entries once the native kernels can honor
+   low-precision accumulator policy.
+5. Thread the existing Mojo `target` parameter through the pointer payload ABI:
+   done for CPU and lazy GPU module exports.
 6. Redirected `einsum(backend="max:cpu", ...)` from the Python MAX Graph
-   bridge to the Mojo MAX backend. Default `backend="max"` still uses MAX
-   Graph when an accelerator exists; move that only after the Mojo FFI equals
-   the current `_interop_max.py` feature surface and wins enough perf to
-   justify owning it.
-7. Add `_interop.to_dlpack`.
+   bridge to the Mojo MAX backend. Default `backend="max"` now tries native
+   GPU on accelerator hosts when `_native_gpu` is built, then falls back to
+   MAX Graph.
+7. Add a direct `_interop.to_dlpack` path for public GPU framework operands.
 8. Run `tests/python/test_numpy_parity.py` with `backend="max"`.
 
 **P10 - GPU dispatch validation:**
 
 1. Python MAX Graph path: done for `backend="max:gpu"` on the B200 host.
-2. Future Mojo `target="gpu"`: repeat CPU/GPU equivalence at
+2. Mojo `target="gpu"` export: added as `_native_gpu`; repeat CPU/GPU equivalence at
    atol=1e-5 (fp32) / 1e-2 (bf16).
 3. `python -m moeinsum._cli.bench` happy-path on a GPU host remains the smoke
    test for both paths.
@@ -238,11 +232,12 @@ Graph interop route:
 **DLPack zero-copy polish (1/2 day after P5):**
 
 1. `_interop.to_dlpack` for numpy / torch / jax / mlx. Receive-side
-   (`to_numpy`) is dtype-preserving and ships; send-side does not.
+   (`to_numpy`) is dtype-preserving and ships; MAX native send-side now uses
+   `Buffer.from_dlpack` after the public API has converted operands to numpy.
 2. `einsum(...)` already round-trips via `_from_numpy(kind)`, so the
    caller's framework / dtype survive the call. The missing piece is the
-   zero-copy edge - today each operand flows through a numpy intermediate
-   at the FFI boundary.
+   direct framework-to-MAX edge for GPU tensors, bypassing the numpy
+   intermediate in `__init__.py`.
 3. Tests: torch <-> jax <-> mlx round-trip + dtype preservation already
    pin in `tests/python/test_interop.py` and
    `test_property.py::test_einsum_preserves_*`. The zero-copy assertion
@@ -257,8 +252,10 @@ Graph interop route:
   order. Unary steps still use Mojo view/reduce helpers.
 - `python/moeinsum/_interop_max.py` owns Python-side MAX routing, lowering
   spec, and the executable MAX Graph bridge. Public `max:cpu` calls
-  `_native.einsum_max_cpu`; `classify_pair(...)`, `lowering_spec(...)`, and
-  `MaxGraphBackend.execute(...)` still share the graph interop machinery.
+  `_native.einsum_max_f32_cpu_ptrs` / `_native.einsum_max_f64_cpu_ptrs`;
+  `max:gpu` lazily imports `_native_gpu` for the matching GPU exports.
+  `classify_pair(...)`, `lowering_spec(...)`, and `MaxGraphBackend.execute(...)`
+  still share the graph interop machinery.
   `_max_graph.py` was deleted once MAX became a default dependency.
 - Dim classification, path optimization, plan IR, and the test harness
   have coverage. The remaining work here is FFI/device/dtype polish rather than

@@ -4,17 +4,17 @@ For v0.1:
   - `einsum(eq, *operands, backend, optimize, accum_dtype)` accepts
     numpy ndarrays and DLPack-capable framework arrays. The reference
     and `native` backends ship for full correctness; `max:cpu` runs the
-    native Mojo MAX TileTensor backend, while `max` / `max:gpu` use MAX
-    Graph when a GPU is selected.
+    native Mojo MAX TileTensor backend. `max:gpu` loads the separate native
+    GPU extension when it is available, then falls back to MAX Graph.
   - `einsum_path(eq, *shapes, optimize)` returns the contraction pair
     sequence the planner chose.
   - `parse_equation(eq)` is a debugging surface that returns the IR.
   - Per-signature LRU cache short-circuits parse + path planning on
     hot calls (see `_cache.py`).
 
-The remaining zero-copy work is send-side DLPack into the Mojo
-TileTensor backend; receive/return interop already preserves dtype and
-framework where supported.
+MAX native paths borrow MAX Buffer storage built from DLPack-capable inputs,
+so the Python boundary sends pointers plus shape/stride metadata rather than
+flat Python float lists.
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def path_cost(
   """Return FLOP and peak-intermediate accounting for a contraction path."""
   shape_lists = [list(shape) for shape in shapes]
   path_steps = [tuple(step) for step in path]
-  return cast("dict[str, object]", _path_cost_native(eq, shape_lists, path_steps))
+  return _path_cost_native(eq, shape_lists, path_steps)
 
 
 def einsum(
@@ -190,9 +190,10 @@ def einsum(
                    Python lists.
       backend:     ``"reference"`` for the full correctness backend.
                    ``"max:cpu"`` uses the native Mojo MAX TileTensor
-                   backend. ``"max"`` uses MAX Graph on GPU when
-                   available and the native MAX CPU backend otherwise;
-                   ``"max:gpu"`` forces MAX Graph GPU placement.
+                   backend. ``"max"`` uses the native GPU extension when
+                   an accelerator is present and that extension is built,
+                   otherwise it falls through to MAX Graph. ``"max:gpu"``
+                   forces accelerator placement.
                    ``"native"`` uses the Mojo plan executor.
       optimize:    Path optimizer name. ``"auto"`` (default),
                    ``"greedy"``, ``"optimal"``, ``"random-greedy"``,

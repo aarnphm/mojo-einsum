@@ -1,18 +1,16 @@
 """Mojo-side MAX backend over TileTensor pairwise contractions.
 
 The public Python `backend="max:cpu"` path enters this module through
-`python/moeinsum/_interop_max.py` and the `_native` extension. `max:gpu` and
-explicit graph tests still use the Python MAX Graph interop path while the
-native GPU ABI matures. This module consumes the repo's `ContractionPlan`, packs
+`python/moeinsum/_interop_max.py` and the `_native` extension. The native GPU
+path enters through the lazy `_native_gpu` extension. Explicit graph tests still
+use the Python MAX Graph interop path. This module consumes the repo's
+`ContractionPlan`, packs
 pairwise steps into BMM-shaped TileTensor buffers, and lowers the contraction
 itself through `linalg.bmm.batched_matmul`.
 
-The current ABI is still flat `UnsafePointer[Float64]` plus runtime
-shape/stride lists, so this implementation materializes TTGT-style packed
-intermediates before the TileTensor call. That is the honest cutover point:
-runtime-strided operands enter as flat buffers, pairwise math runs through MAX's
-TileTensor BMM kernel, and a later zero-copy RuntimeLayout path can remove the
-packing when the ABI grows real TileTensor operands.
+Runtime-strided operands enter as borrowed scalar pointers plus shape/stride
+lists. Pairwise math packs the current views into BMM-shaped TileTensor buffers
+and runs through MAX's TileTensor BMM kernel.
 """
 
 from std.collections import List
@@ -35,8 +33,8 @@ from einsum.unary import (
 
 
 @fieldwise_init
-struct _WorkTensor(Copyable, Movable):
-    var data: UnsafePointer[Float64, MutAnyOrigin]
+struct _WorkTensor[dtype: DType](Copyable, Movable):
+    var data: UnsafePointer[Scalar[Self.dtype], MutAnyOrigin]
     var shape: List[Int]
     var strides: List[Int]
     var labels: List[Int]
@@ -71,9 +69,11 @@ def _zeros(n: Int) -> List[Int]:
     return out^
 
 
-def _zero_buffer(ptr: UnsafePointer[Float64, MutAnyOrigin], n: Int) -> None:
+def _zero_buffer[
+    dtype: DType,
+](ptr: UnsafePointer[Scalar[dtype], MutAnyOrigin], n: Int) -> None:
     for i in range(n):
-        ptr[i] = 0.0
+        ptr[i] = Scalar[dtype](0)
 
 
 def _advance_index(mut idx: List[Int], shape: List[Int]) -> Bool:
@@ -294,8 +294,10 @@ def _grouped_operand_offset(
     return off
 
 
-def _pack_lhs_bmk(
-    src: _WorkTensor,
+def _pack_lhs_bmk[
+    dtype: DType,
+](
+    src: _WorkTensor[dtype],
     src_labels: List[Int],
     batch_labels: List[Int],
     batch_shape: List[Int],
@@ -303,7 +305,7 @@ def _pack_lhs_bmk(
     m_shape: List[Int],
     k_labels: List[Int],
     k_shape: List[Int],
-    dst: UnsafePointer[Float64, MutAnyOrigin],
+    dst: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     m_size: Int,
     k_size: Int,
 ) raises -> None:
@@ -339,8 +341,10 @@ def _pack_lhs_bmk(
             break
 
 
-def _pack_rhs_bkn(
-    src: _WorkTensor,
+def _pack_rhs_bkn[
+    dtype: DType,
+](
+    src: _WorkTensor[dtype],
     src_labels: List[Int],
     batch_labels: List[Int],
     batch_shape: List[Int],
@@ -348,7 +352,7 @@ def _pack_rhs_bkn(
     k_shape: List[Int],
     n_labels: List[Int],
     n_shape: List[Int],
-    dst: UnsafePointer[Float64, MutAnyOrigin],
+    dst: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     k_size: Int,
     n_size: Int,
 ) raises -> None:
@@ -385,13 +389,14 @@ def _pack_rhs_bkn(
 
 
 def _execute_pairwise[
-    target: StaticString = "cpu"
+    dtype: DType,
+    target: StaticString = "cpu",
 ](
     step: PairwiseStep,
-    lhs: _WorkTensor,
-    rhs: _WorkTensor,
-    mut allocated: List[UnsafePointer[Float64, MutAnyOrigin]],
-) raises -> _WorkTensor:
+    lhs: _WorkTensor[dtype],
+    rhs: _WorkTensor[dtype],
+    mut allocated: List[UnsafePointer[Scalar[dtype], MutAnyOrigin]],
+) raises -> _WorkTensor[dtype]:
     var batch_labels = _labels_for_axes(step.lhs_labels, step.batch_axes_lhs)
     var m_labels = _labels_for_axes(step.lhs_labels, step.free_axes_lhs)
     var k_labels = _labels_for_axes(step.lhs_labels, step.contract_axes_lhs)
@@ -425,24 +430,24 @@ def _execute_pairwise[
 
     var out_n = batch_size * m_size * n_size
     var out_alloc_n = out_n if out_n > 0 else 1
-    var out_data = alloc[Float64](out_alloc_n)
-    _zero_buffer(out_data, out_alloc_n)
+    var out_data = alloc[Scalar[dtype]](out_alloc_n)
+    _zero_buffer[dtype](out_data, out_alloc_n)
     allocated.append(out_data)
 
     if out_n == 0 or k_size == 0:
-        return _transpose_to_labels(
-            _WorkTensor(out_data, natural_shape^, natural_strides^, natural_labels^),
+        return _transpose_to_labels[dtype](
+            _WorkTensor[dtype](out_data, natural_shape^, natural_strides^, natural_labels^),
             step.out_labels,
         )
 
     var lhs_n = batch_size * m_size * k_size
     var rhs_n = batch_size * k_size * n_size
-    var lhs_pack = alloc[Float64](lhs_n)
-    var rhs_pack = alloc[Float64](rhs_n)
+    var lhs_pack = alloc[Scalar[dtype]](lhs_n)
+    var rhs_pack = alloc[Scalar[dtype]](rhs_n)
     allocated.append(lhs_pack)
     allocated.append(rhs_pack)
 
-    _pack_lhs_bmk(
+    _pack_lhs_bmk[dtype](
         lhs,
         step.lhs_labels,
         batch_labels,
@@ -455,7 +460,7 @@ def _execute_pairwise[
         m_size,
         k_size,
     )
-    _pack_rhs_bkn(
+    _pack_rhs_bkn[dtype](
         rhs,
         step.rhs_labels,
         batch_labels,
@@ -477,8 +482,8 @@ def _execute_pairwise[
     var c_tile = TileTensor(out_data, c_layout)
     batched_matmul[transpose_a=False, transpose_b=False, target=target](c_tile, a_tile, b_tile)
 
-    return _transpose_to_labels(
-        _WorkTensor(out_data, natural_shape^, natural_strides^, natural_labels^),
+    return _transpose_to_labels[dtype](
+        _WorkTensor[dtype](out_data, natural_shape^, natural_strides^, natural_labels^),
         step.out_labels,
     )
 
@@ -491,11 +496,13 @@ def _shape_after_reduce(shape: List[Int], reduce_axes: List[Int]) -> List[Int]:
     return out^
 
 
-def _execute_unary(
+def _execute_unary[
+    dtype: DType,
+](
     step: UnaryStep,
-    tensor: _WorkTensor,
-    mut allocated: List[UnsafePointer[Float64, MutAnyOrigin]],
-) raises -> _WorkTensor:
+    tensor: _WorkTensor[dtype],
+    mut allocated: List[UnsafePointer[Scalar[dtype], MutAnyOrigin]],
+) raises -> _WorkTensor[dtype]:
     var data = tensor.data
     var shape = tensor.shape.copy()
     var strides = tensor.strides.copy()
@@ -510,11 +517,11 @@ def _execute_unary(
         var reduced_strides = _row_major_strides(reduced_shape)
         var n = _numel(reduced_shape)
         var alloc_n = n if n > 0 else 1
-        var reduced_data = alloc[Float64](alloc_n)
-        _zero_buffer(reduced_data, alloc_n)
+        var reduced_data = alloc[Scalar[dtype]](alloc_n)
+        _zero_buffer[dtype](reduced_data, alloc_n)
         allocated.append(reduced_data)
         if n > 0:
-            reduce_sum_axes(
+            reduce_sum_axes[dtype](
                 data,
                 shape,
                 strides,
@@ -536,7 +543,7 @@ def _execute_unary(
             )
         )
     var transposed = transpose_view(shape, strides, step.out_permutation)
-    return _WorkTensor(
+    return _WorkTensor[dtype](
         data,
         transposed.shape.copy(),
         transposed.strides.copy(),
@@ -569,15 +576,14 @@ def _permutation_for_labels(src_labels: List[Int], dst_labels: List[Int]) raises
     return perm^
 
 
-def _transpose_to_labels(
-    tensor: _WorkTensor,
-    labels: List[Int],
-) raises -> _WorkTensor:
+def _transpose_to_labels[
+    dtype: DType,
+](tensor: _WorkTensor[dtype], labels: List[Int],) raises -> _WorkTensor[dtype]:
     if _labels_equal(tensor.labels, labels):
         return tensor.copy()
     var perm = _permutation_for_labels(tensor.labels, labels)
     var transposed = transpose_view(tensor.shape, tensor.strides, perm)
-    return _WorkTensor(
+    return _WorkTensor[dtype](
         tensor.data,
         transposed.shape.copy(),
         transposed.strides.copy(),
@@ -585,9 +591,11 @@ def _transpose_to_labels(
     )
 
 
-def _copy_pair_survivors(
-    working: List[_WorkTensor],
-    mut next_working: List[_WorkTensor],
+def _copy_pair_survivors[
+    dtype: DType,
+](
+    working: List[_WorkTensor[dtype]],
+    mut next_working: List[_WorkTensor[dtype]],
     lhs_idx: Int,
     rhs_idx: Int,
 ) raises -> None:
@@ -600,9 +608,11 @@ def _copy_pair_survivors(
             next_working.append(working[i].copy())
 
 
-def _copy_to_output(
-    tensor: _WorkTensor,
-    out_ptr: UnsafePointer[Float64, MutAnyOrigin],
+def _copy_to_output[
+    dtype: DType,
+](
+    tensor: _WorkTensor[dtype],
+    out_ptr: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     out_shape: List[Int],
     out_strides: List[Int],
 ) raises -> None:
@@ -639,13 +649,14 @@ def _copy_to_output(
 
 
 def execute_max[
-    target: StaticString = "cpu"
+    dtype: DType = DType.float64,
+    target: StaticString = "cpu",
 ](
     plan: ContractionPlan,
-    operand_data: List[UnsafePointer[Float64, MutAnyOrigin]],
+    operand_data: List[UnsafePointer[Scalar[dtype], MutAnyOrigin]],
     operand_shapes: List[List[Int]],
     operand_strides: List[List[Int]],
-    out_ptr: UnsafePointer[Float64, MutAnyOrigin],
+    out_ptr: UnsafePointer[Scalar[dtype], MutAnyOrigin],
     out_shape: List[Int],
     out_strides: List[Int],
 ) raises:
@@ -654,7 +665,7 @@ def execute_max[
     Same working-set semantics as `ContractionPlan`: pairwise steps consume two
     operands and append one result; unary steps replace their operand in place.
     Pairwise math lowers through `linalg.bmm.batched_matmul` after packing the
-    current flat-buffer ABI into BMM-shaped TileTensor buffers. `target`
+    current runtime-strided pointer ABI into BMM-shaped TileTensor buffers. `target`
     selects the MAX kernel target at compile time, matching `linalg.bmm`.
     """
     if len(operand_data) != len(operand_shapes) or len(operand_data) != len(operand_strides):
@@ -669,10 +680,10 @@ def execute_max[
             )
         )
 
-    var working = List[_WorkTensor]()
+    var working = List[_WorkTensor[dtype]]()
     for i in range(len(operand_data)):
         working.append(
-            _WorkTensor(
+            _WorkTensor[dtype](
                 operand_data[i],
                 operand_shapes[i].copy(),
                 operand_strides[i].copy(),
@@ -680,7 +691,7 @@ def execute_max[
             )
         )
 
-    var allocated = List[UnsafePointer[Float64, MutAnyOrigin]]()
+    var allocated = List[UnsafePointer[Scalar[dtype], MutAnyOrigin]]()
     for step_idx in range(len(plan.steps)):
         var step = plan.steps[step_idx].copy()
         if step.isa[PairwiseStep]():
@@ -689,9 +700,9 @@ def execute_max[
                 raise Error(String("execute_max: pairwise step index out of range at step ", step_idx))
             var lhs = working[ps.lhs_idx].copy()
             var rhs = working[ps.rhs_idx].copy()
-            var out = _execute_pairwise[target=target](ps, lhs, rhs, allocated)
-            var next_working = List[_WorkTensor]()
-            _copy_pair_survivors(
+            var out = _execute_pairwise[dtype, target=target](ps, lhs, rhs, allocated)
+            var next_working = List[_WorkTensor[dtype]]()
+            _copy_pair_survivors[dtype](
                 working,
                 next_working,
                 ps.lhs_idx,
@@ -703,7 +714,7 @@ def execute_max[
             var us = step.unsafe_get[UnaryStep]().copy()
             if us.operand_idx < 0 or us.operand_idx >= len(working):
                 raise Error(String("execute_max: unary step index out of range at step ", step_idx))
-            var out = _execute_unary(us, working[us.operand_idx].copy(), allocated)
+            var out = _execute_unary[dtype](us, working[us.operand_idx].copy(), allocated)
             working[us.operand_idx] = out^
 
     if len(working) != 1:
@@ -715,8 +726,8 @@ def execute_max[
             )
         )
 
-    var result = _transpose_to_labels(working[0], plan.final_labels)
-    _copy_to_output(result, out_ptr, out_shape, out_strides)
+    var result = _transpose_to_labels[dtype](working[0], plan.final_labels)
+    _copy_to_output[dtype](result, out_ptr, out_shape, out_strides)
 
     for i in range(len(allocated)):
         allocated[i].free()
