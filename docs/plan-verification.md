@@ -109,7 +109,7 @@ moeinsum-bench "ij,jk->ik" --shapes 1024,1024 1024,1024 --sweep-optimizers --vs-
 moeinsum-bench "bij,bjk->bik" --shapes 32,128,128 32,128,128 --repeats 100
 ```
 
-JSON schema validated by `tests/python/test_bench_cli.py` (11 subprocess cases, including `--compare` / `--compare-engines`).
+JSON schema validated by `tests/python/test_bench_cli.py` (13 subprocess cases + 1 in-process `main(...)` call for the `--backend max:*` `is_loadable()` gate, covering `--include-path`, `--sweep-optimizers`, `--vs-numpy`, `--compare-engines`, `--cache-bench`, `--dtype bfloat16` skip-handshake, `random-greedy-N`, invalid-equation and explicit-path rejection, `[project.scripts]` console entry).
 
 ---
 
