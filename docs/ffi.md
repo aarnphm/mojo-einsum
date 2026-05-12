@@ -128,7 +128,7 @@ env MODULAR_PATH= MODULAR_DERIVED_PATH= \
 ## Python-side wiring
 
 `python/moeinsum/__init__.py` already takes a `backend` parameter. Today,
-`backend.startswith("max")` dispatches to `_max_backend.execute_max`, the
+`backend.startswith("max")` dispatches to `_interop_max.execute_max`, the
 Python MAX Graph bridge. The Mojo cutover replaces that call with the FFI
 entry above:
 
@@ -182,7 +182,7 @@ expanded, not replaced, when the Mojo cutover lands:
 5. Thread the existing Mojo `target` parameter through `einsum_max_py` so
    `backend="max:gpu"` can instantiate `execute_max[target="gpu"]`.
 6. Redirect `einsum(backend="max", ...)` from the Python MAX Graph bridge
-   only if the Mojo FFI equals the current `_max_backend.py` feature
+   only if the Mojo FFI equals the current `_interop_max.py` feature
    surface and wins enough perf to justify owning it.
 7. Add `_interop.to_dlpack`.
 8. Run `tests/python/test_numpy_parity.py` with `backend="max"`.
@@ -234,7 +234,7 @@ expanded, not replaced, when the Mojo cutover lands:
   materialize lhs as `[batch, m, k]`, materialize rhs as `[batch, k, n]`, call
   `linalg.bmm.batched_matmul`, then expose the step result in `out_labels`
   order. Unary steps still use Mojo view/reduce helpers.
-- `python/moeinsum/_max_backend.py` owns the Python-side lowering spec and
+- `python/moeinsum/_interop_max.py` owns the Python-side lowering spec and
   executable MAX Graph bridge. `classify_pair(...)`, `lowering_spec(...)`,
   and `MaxGraphBackend.execute(...)` share that file; `_max_graph.py` was
   deleted once MAX became a default dependency.

@@ -187,7 +187,7 @@ def test_broadcast_against_singleton_batch_axis() -> None:
   broadcast rule. Reference backend implements this via stride-0 on the
   size-1 operand axis (`reference.mojo::_flat_offset`); MAX backend
   emits an explicit `broadcast_to` before the matmul reshape
-  (`_max_backend.py::_lower_pair`). Either lowering reaches the same
+  (`_interop_max.py::_lower_pair`). Either lowering reaches the same
   `(5, 3, 6)` output."""
   rng = np.random.default_rng(0)
   a = rng.standard_normal((1, 3, 4))

@@ -1,0 +1,206 @@
+name: Wheels
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MOJO_INDEX_URL: https://whl.modular.com/nightly/simple/
+  MOHAUS_INDEX_URL: https://aarnphm.github.io/mohaus/simple/
+
+jobs:
+  wheel-matrix:
+    name: wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            artifact: wheels-macos-arm64
+            mojo_flags: ""
+          - os: ubuntu-latest
+            artifact: wheels-linux-x86_64
+            mojo_flags: "--target-cpu=x86-64"
+    env:
+      MOHAUS_MOJO: ${{ github.workspace }}/.venv/bin/mojo
+      MOJO_FLAGS: ${{ matrix.mojo_flags }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install uv
+        run: python -m pip install --upgrade uv
+
+      - name: install nightly modular and mohaus
+        run: |
+          set -euo pipefail
+          python -m uv venv --python 3.11 --clear "$GITHUB_WORKSPACE/.venv"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          venv_python="$GITHUB_WORKSPACE/.venv/bin/python"
+
+          python -m uv pip install \
+            --python "$venv_python" \
+            modular \
+            --index-url "$MOJO_INDEX_URL" \
+            --extra-index-url https://pypi.org/simple \
+            --prerelease allow
+
+          "$GITHUB_WORKSPACE/.venv/bin/mojo" --version
+
+          python -m uv pip install \
+            --python "$venv_python" \
+            mohaus \
+            --index-url "$MOHAUS_INDEX_URL" \
+            --extra-index-url https://pypi.org/simple
+
+      - name: stamp commit into local version
+        run: |
+          set -euo pipefail
+          short=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          python - <<PY
+          from pathlib import Path
+          import re
+          path = Path("pyproject.toml")
+          original = path.read_text()
+          updated = re.sub(r'^version = "([^"+]+)"', r'version = "\1+g${short}"', original, count=1, flags=re.MULTILINE)
+          path.write_text(updated)
+          PY
+          grep '^version' pyproject.toml
+
+      - name: configure Mojo flags
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          flags = [flag for flag in os.environ.get("MOJO_FLAGS", "").split() if flag]
+          rendered = ", ".join(f'"{flag}"' for flag in flags)
+          path = Path("pyproject.toml")
+          original = path.read_text()
+          updated = original.replace("mojo-flags = []", f"mojo-flags = [{rendered}]", 1)
+          path.write_text(updated)
+          PY
+
+      - name: build wheel
+        run: .venv/bin/mohaus build --out dist
+
+      - name: upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*.whl
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install uv
+        run: python -m pip install --upgrade uv
+
+      - name: install mohaus
+        run: |
+          python -m uv pip install \
+            --system \
+            mohaus \
+            --index-url "$MOHAUS_INDEX_URL" \
+            --extra-index-url https://pypi.org/simple
+
+      - name: stamp commit into local version
+        run: |
+          set -euo pipefail
+          short=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          python - <<PY
+          from pathlib import Path
+          import re
+          path = Path("pyproject.toml")
+          original = path.read_text()
+          updated = re.sub(r'^version = "([^"+]+)"', r'version = "\1+g${short}"', original, count=1, flags=re.MULTILINE)
+          path.write_text(updated)
+          PY
+          grep '^version' pyproject.toml
+
+      - name: build sdist
+        run: mohaus sdist --out dist
+
+      - name: upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+  index:
+    name: simple index
+    if: |
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.wheel-matrix.result == 'success'
+      && needs.sdist.result == 'success'
+    needs: [wheel-matrix, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: build PEP 503 simple index
+        run: |
+          python scripts/build_simple_index.py \
+            --dist dist \
+            --out site \
+            --commit "${GITHUB_SHA}" \
+            --commit-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}" \
+            --prune
+
+      - name: upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: deploy Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

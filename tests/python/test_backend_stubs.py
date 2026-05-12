@@ -5,7 +5,7 @@ from __future__ import annotations
 import moeinsum
 import numpy as np
 import pytest
-from moeinsum._max_backend import MaxGraphBackend, classify_pair, lowering_spec
+from moeinsum._interop_max import MaxGraphBackend, classify_pair, lowering_spec
 
 
 def _kinds(spec: dict[str, object]) -> list[str]:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import moeinsum
 import numpy as np
 import pytest
-from moeinsum._max_backend import MaxGraphBackend
+from moeinsum._interop_max import MaxGraphBackend
 
 
 @pytest.mark.parametrize(
@@ -76,17 +76,17 @@ def test_max_backend_model_cache_reuses_compiled_graph() -> None:
   only notice when a benchmark reviewer asks why the headline number moved.
   Asserting on cache length here catches the breakage the day the key drifts.
   """
-  from moeinsum import _max_backend  # noqa: PLC0415
+  from moeinsum import _interop_max  # noqa: PLC0415
 
-  _max_backend._MODEL_CACHE.clear()
+  _interop_max._MODEL_CACHE.clear()
   a = np.arange(12, dtype=np.float32).reshape(3, 4)
   b = np.arange(20, dtype=np.float32).reshape(4, 5)
 
-  before = len(_max_backend._MODEL_CACHE)
+  before = len(_interop_max._MODEL_CACHE)
   moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
-  after_first = len(_max_backend._MODEL_CACHE)
+  after_first = len(_interop_max._MODEL_CACHE)
   moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
-  after_second = len(_max_backend._MODEL_CACHE)
+  after_second = len(_interop_max._MODEL_CACHE)
 
   assert after_first == before + 1, f"first call should add exactly one cache entry, grew by {after_first - before}"
   assert after_second == after_first, (
@@ -100,34 +100,34 @@ def test_max_backend_model_cache_keys_on_dtype() -> None:
   accept fp64 inputs, so the key has to discriminate. If it doesn't, the
   second call either reuses the wrong model (wrong results) or crashes at
   execute time — both worse than a clean miss."""
-  from moeinsum import _max_backend  # noqa: PLC0415
+  from moeinsum import _interop_max  # noqa: PLC0415
 
-  _max_backend._MODEL_CACHE.clear()
+  _interop_max._MODEL_CACHE.clear()
   a32 = np.arange(12, dtype=np.float32).reshape(3, 4)
   b32 = np.arange(20, dtype=np.float32).reshape(4, 5)
   a64 = a32.astype(np.float64)
   b64 = b32.astype(np.float64)
 
-  before = len(_max_backend._MODEL_CACHE)
+  before = len(_interop_max._MODEL_CACHE)
   moeinsum.einsum("ij,jk->ik", a32, b32, backend="max:cpu")
   moeinsum.einsum("ij,jk->ik", a64, b64, backend="max:cpu")
-  after = len(_max_backend._MODEL_CACHE)
+  after = len(_interop_max._MODEL_CACHE)
   assert after - before == 2, (
     f"dtype change should produce a fresh compile (cache grows by 2); grew by {after - before}"
   )
 
 
 def test_max_backend_model_cache_keys_on_accum_dtype() -> None:
-  from moeinsum import _max_backend  # noqa: PLC0415
+  from moeinsum import _interop_max  # noqa: PLC0415
 
-  _max_backend._MODEL_CACHE.clear()
+  _interop_max._MODEL_CACHE.clear()
   a = np.arange(12, dtype=np.float32).reshape(3, 4)
   b = np.arange(20, dtype=np.float32).reshape(4, 5)
 
-  before = len(_max_backend._MODEL_CACHE)
+  before = len(_interop_max._MODEL_CACHE)
   moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu", accum_dtype=np.float32)
   moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu", accum_dtype=np.float64)
-  after = len(_max_backend._MODEL_CACHE)
+  after = len(_interop_max._MODEL_CACHE)
   assert after - before == 2, (
     f"accum_dtype change should produce a fresh compile (cache grows by 2); grew by {after - before}"
   )
@@ -146,19 +146,19 @@ def test_max_backend_model_cache_keys_on_shape() -> None:
   MAX graphs are shape-static (TensorType pins concrete dims), so reusing
   the (3,4)x(4,5) compile against (3,5)x(5,7) inputs would fail at execute.
   """
-  from moeinsum import _max_backend  # noqa: PLC0415
+  from moeinsum import _interop_max  # noqa: PLC0415
 
-  _max_backend._MODEL_CACHE.clear()
+  _interop_max._MODEL_CACHE.clear()
   rng = np.random.default_rng(0)
   a1 = rng.standard_normal((3, 4)).astype(np.float32)
   b1 = rng.standard_normal((4, 5)).astype(np.float32)
   a2 = rng.standard_normal((3, 5)).astype(np.float32)
   b2 = rng.standard_normal((5, 7)).astype(np.float32)
 
-  before = len(_max_backend._MODEL_CACHE)
+  before = len(_interop_max._MODEL_CACHE)
   moeinsum.einsum("ij,jk->ik", a1, b1, backend="max:cpu")
   moeinsum.einsum("ij,jk->ik", a2, b2, backend="max:cpu")
-  after = len(_max_backend._MODEL_CACHE)
+  after = len(_interop_max._MODEL_CACHE)
   assert after - before == 2, (
     f"shape change should produce a fresh compile (cache grows by 2); grew by {after - before}"
   )
@@ -170,11 +170,11 @@ def test_max_backend_model_cache_lru_evicts_at_max() -> None:
   and check the oldest entry is the one that got dropped (MRU survives).
   Restore the cap afterwards so the rest of the suite uses the real bound.
   """
-  from moeinsum import _max_backend  # noqa: PLC0415
+  from moeinsum import _interop_max  # noqa: PLC0415
 
-  _max_backend._MODEL_CACHE.clear()
-  saved_cap = _max_backend._MODEL_CACHE_MAX
-  _max_backend._MODEL_CACHE_MAX = 3
+  _interop_max._MODEL_CACHE.clear()
+  saved_cap = _interop_max._MODEL_CACHE_MAX
+  _interop_max._MODEL_CACHE_MAX = 3
   try:
     rng = np.random.default_rng(0)
     shapes = [(3, 4), (3, 5), (3, 6), (3, 7)]  # 4 distinct compiles, cap=3
@@ -183,25 +183,25 @@ def test_max_backend_model_cache_lru_evicts_at_max() -> None:
       b = rng.standard_normal((cols, 2)).astype(np.float32)
       moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
 
-    assert len(_max_backend._MODEL_CACHE) == 3, f"LRU should cap at 3, got {len(_max_backend._MODEL_CACHE)}"
+    assert len(_interop_max._MODEL_CACHE) == 3, f"LRU should cap at 3, got {len(_interop_max._MODEL_CACHE)}"
     # Oldest key was the (3,4)x(4,2) compile - it should have been
     # evicted; the remaining three are (3,5), (3,6), (3,7).
-    surviving_shapes = {key[1] for key in _max_backend._MODEL_CACHE}
+    surviving_shapes = {key[1] for key in _interop_max._MODEL_CACHE}
     assert ((3, 4), (4, 2)) not in surviving_shapes, "oldest entry should have been evicted"
   finally:
-    _max_backend._MODEL_CACHE_MAX = saved_cap
-    _max_backend._MODEL_CACHE.clear()
+    _interop_max._MODEL_CACHE_MAX = saved_cap
+    _interop_max._MODEL_CACHE.clear()
 
 
 def test_max_backend_model_cache_lru_promotes_on_hit() -> None:
   """A cache hit moves the entry to MRU. After hitting an old entry, a
   subsequent eviction should drop the previously second-oldest, not the
   freshly-promoted one."""
-  from moeinsum import _max_backend  # noqa: PLC0415
+  from moeinsum import _interop_max  # noqa: PLC0415
 
-  _max_backend._MODEL_CACHE.clear()
-  saved_cap = _max_backend._MODEL_CACHE_MAX
-  _max_backend._MODEL_CACHE_MAX = 3
+  _interop_max._MODEL_CACHE.clear()
+  saved_cap = _interop_max._MODEL_CACHE_MAX
+  _interop_max._MODEL_CACHE_MAX = 3
   try:
     rng = np.random.default_rng(0)
     # Fill at cap.
@@ -210,22 +210,22 @@ def test_max_backend_model_cache_lru_promotes_on_hit() -> None:
       a = rng.standard_normal((3, cols[1])).astype(np.float32)
       b = rng.standard_normal((cols[1], 2)).astype(np.float32)
       moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
-    assert len(_max_backend._MODEL_CACHE) == 3
+    assert len(_interop_max._MODEL_CACHE) == 3
 
     # Hit the oldest entry - it should move to MRU.
     a = rng.standard_normal((3, 4)).astype(np.float32)
     b = rng.standard_normal((4, 2)).astype(np.float32)
     moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
-    assert len(_max_backend._MODEL_CACHE) == 3, "hit should not grow cache"
+    assert len(_interop_max._MODEL_CACHE) == 3, "hit should not grow cache"
 
     # Insert a 4th distinct signature - the (3,5) entry should evict,
     # not (3,4) which we just promoted.
     a = rng.standard_normal((3, 7)).astype(np.float32)
     b = rng.standard_normal((7, 2)).astype(np.float32)
     moeinsum.einsum("ij,jk->ik", a, b, backend="max:cpu")
-    surviving = {key[1] for key in _max_backend._MODEL_CACHE}
+    surviving = {key[1] for key in _interop_max._MODEL_CACHE}
     assert ((3, 4), (4, 2)) in surviving, "freshly-promoted entry must survive"
     assert ((3, 5), (5, 2)) not in surviving, "second-oldest should have evicted"
   finally:
-    _max_backend._MODEL_CACHE_MAX = saved_cap
-    _max_backend._MODEL_CACHE.clear()
+    _interop_max._MODEL_CACHE_MAX = saved_cap
+    _interop_max._MODEL_CACHE.clear()

@@ -30,7 +30,7 @@ to force.
 - **Plan IR** (`plan.mojo`): backend-agnostic `ContractionPlan` with B/K/M/N classification per JAX's `_einsum`.
 - **Path optimizer** (`path.mojo`): native Mojo implementations of opt_einsum's `greedy`, `optimal-DP`, `branch`, `random-greedy`, and `auto` algorithms.
 - **Reference backend** (`backends/reference.mojo`): naive nested-loop einsum, the correctness golden.
-- **MAX Graph backend** (`python/moeinsum/_max_backend.py`): executable `backend="max[:cpu|gpu]"` for the shipped equation grammar, including ellipsis, size-1 broadcast, diagonal / trace, unary transpose, reduce-sum, and matmul-shaped pairwise steps.
+- **MAX Graph backend** (`python/moeinsum/_interop_max.py`): executable `backend="max[:cpu|gpu]"` for the shipped equation grammar, including ellipsis, size-1 broadcast, diagonal / trace, unary transpose, reduce-sum, and matmul-shaped pairwise steps.
 - **Mojo MAX backend seam** (`backends/max.mojo`): consumes `ContractionPlan`, packs flat runtime-strided operands into BMM-shaped `TileTensor` buffers, and lowers pairwise steps through `linalg.bmm.batched_matmul`.
 - **Native backend** (`backends/native.mojo`): executable Mojo flat-buffer plan executor for the full grammar, with SIMD/GPU GETT kernel cutover pending.
 - **Unary kernels** (`unary.mojo`): layout-only transpose/diagonal views, reduce-sum.
@@ -52,7 +52,11 @@ to force.
 This project uses [mohaus](https://github.com/aarnphm/mohaus)
 
 ```bash
-uv pip install -e .
+uv pip install -e . \
+  --index-url https://whl.modular.com/nightly/simple/ \
+  --extra-index-url https://aarnphm.github.io/mohaus/simple \
+  --extra-index-url https://pypi.org/simple \
+  --prerelease allow
 python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik', np.eye(3), np.eye(3)))"
 ```
 
@@ -65,7 +69,7 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P2    | done    | Parser polish (ellipsis, trace, diagonal, implicit output, multi-char)                                           |
 | P3    | done    | Unary kernels (transpose / diagonal / sum / trace)                                                               |
 | P4    | done    | Path optimizer: greedy + optimal-DP + auto + random-greedy(-N) + branch family                                   |
-| P5    | done    | Default MAX Graph backend shipped through `python/moeinsum/_max_backend.py`; Mojo MAX seam lowers pairwise steps through `TileTensor` / `linalg.bmm.batched_matmul` |
+| P5    | done    | Default MAX Graph backend shipped through `python/moeinsum/_interop_max.py`; Mojo MAX seam lowers pairwise steps through `TileTensor` / `linalg.bmm.batched_matmul` |
 | P6    | done    | Multi-operand orchestration (working-set semantics); ContractionContext arena deferred                           |
 | P7    | done    | JIT plan cache (Python-side LRU, keyed by eq+shape+optimize)                                                     |
 | P8    | done    | DLPack interop: dtype-preserving in/out, framework-native return (torch in -> torch out)                         |
@@ -74,7 +78,7 @@ python -c "import moeinsum; import numpy as np; print(moeinsum.einsum('ij,jk->ik
 | P11   | done    | Native flat-buffer backend shipped; optimized CPU GETT is post-v0.1 perf work                                    |
 | P12   | done    | Native flat-buffer backend shipped; optimized GPU SM90 WGMMA is post-v0.1 perf work                              |
 | P13   | done    | Benchmark CLI (`moeinsum-bench` script)                                                                          |
-| P14   | done    | `MaxGraphBackend`: lowering spec and executable bridge collapsed into `_max_backend.py`; `_max_graph.py` removed |
+| P14   | done    | `MaxGraphBackend`: lowering spec and executable bridge collapsed into `_interop_max.py`; `_max_graph.py` removed |
 | P15   | done    | Docs (notation / derivations / perf / comparisons / ffi), editor-reviewed                                        |
 
 `done` = shipped. Lower-level kernel perf work can still exist after a phase closes; it lives in the roadmap notes, not as a second public API.

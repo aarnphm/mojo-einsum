@@ -7,7 +7,7 @@ import json
 import sys
 
 from .. import _native, path_cost
-from .._max_backend import lowering_spec as _max_lowering_spec
+from .._interop_max import lowering_spec as _max_lowering_spec
 
 _OPTIMIZE = (
   "naive",
@@ -99,7 +99,7 @@ def _max_record(
       "status": "unsupported",
       "supported": False,
       "reason": f"{type(exc).__name__}: {exc}",
-      "implementation": "python/moeinsum/_max_backend.py",
+      "implementation": "python/moeinsum/_interop_max.py",
     }
 
   device_policy = {
@@ -111,7 +111,7 @@ def _max_record(
     "status": "ok",
     "supported": True,
     "device_policy": device_policy,
-    "implementation": "python/moeinsum/_max_backend.py::_lower_graph",
+    "implementation": "python/moeinsum/_interop_max.py::_lower_graph",
     "compiler_target": "MAX Graph",
     "mojo_backend": {
       "implementation": "src/einsum/backends/max.mojo::execute_max",

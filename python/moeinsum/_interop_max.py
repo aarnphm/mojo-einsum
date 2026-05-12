@@ -1,4 +1,4 @@
-"""Executable MAX Graph backend for einsum plan steps.
+"""Executable MAX Graph interop for einsum plan steps.
 
 The backend supports ellipsis expansion, size-1 broadcast, pairwise
 matmul, unary transpose, diagonal extraction, and unary reduce-sum.

@@ -21,9 +21,9 @@ jobs:
       - name: install ruff
         run: pip install ruff
       - name: lint
-        run: ruff check python tests
+        run: ruff check python tests scripts
       - name: format-check
-        run: ruff format --check python tests
+        run: ruff format --check python tests scripts
 
   pyproject-check:
     runs-on: ubuntu-latest

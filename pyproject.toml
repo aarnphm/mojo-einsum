@@ -1,8 +1,7 @@
 [build-system]
 requires = [
   "mohaus>=0.1",
-  "mojo==0.26.2.0",
-  "max==26.2.0",
+  "modular",
 ]
 build-backend = "mohaus.backend"
 
@@ -20,7 +19,7 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Mathematics",
 ]
-dependencies = ["numpy>=2", "max==26.2.0", "ml_dtypes>=0.5", "mohaus>=0.1"]
+dependencies = ["numpy>=2", "modular", "ml_dtypes>=0.5", "mohaus>=0.1"]
 
 [project.scripts]
 moeinsum-bench = "moeinsum._cli.bench:main"
@@ -38,7 +37,6 @@ dev = [
   "ruff>=0.5",
   "ty",
   "ipython",
-  "mojo==0.26.2.0",
 ]
 
 [dependency-groups]

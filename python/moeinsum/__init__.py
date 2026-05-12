@@ -29,7 +29,7 @@ from ._cache import PLAN_CACHE
 from ._interop import from_numpy as _from_numpy
 from ._interop import source_kind as _source_kind
 from ._interop import to_numpy as _to_numpy
-from ._max_backend import execute_max as _execute_max
+from ._interop_max import execute_max as _execute_max
 from ._native import (
   einsum_compute_path as _einsum_compute_path_native,
 )
