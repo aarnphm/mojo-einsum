@@ -9,6 +9,8 @@ For v0.1:
   - `einsum_path(eq, *shapes, optimize)` returns the contraction pair
     sequence the planner chose.
   - `parse_equation(eq)` is a debugging surface that returns the IR.
+  - `einsum(..., ir=True)` prints parser/path/backend lowering JSON before
+    executing the selected backend.
   - Per-signature LRU cache short-circuits parse + path planning on
     hot calls (see `_cache.py`).
 
@@ -179,6 +181,7 @@ def einsum(
   dtype: DTypeLike | None = None,
   return_type: str | None = None,
   deterministic: bool = True,
+  ir: bool = False,
 ) -> object:
   """Compute an einsum.
 
@@ -219,11 +222,16 @@ def einsum(
                    Optimized backends still need a real deterministic
                    lowering before this flag means bitwise repeatability
                    outside the reference path.
+      ir:          When True, print parser IR, chosen path, cost estimates,
+                   MAX plan graph lowering, and the selected backend lowering
+                   as JSON before executing.
 
   Returns:
       The contraction result in the framework chosen by `return_type`
       (or the first operand's framework when `return_type=None`).
   """
+  if not isinstance(ir, bool):
+    raise TypeError(f"ir must be bool, got {type(ir).__name__}")
   if not isinstance(deterministic, bool):
     raise TypeError(f"deterministic must be bool, got {type(deterministic).__name__}")
   if accum_dtype is not None:
@@ -252,17 +260,34 @@ def einsum(
   # the fp64 conversion is a reference-backend FFI detail applied at the
   # kernel boundary, not at the API surface.
   arrays = [_to_numpy(o) for o in operands]
+  shapes = [list(a.shape) for a in arrays]
+  path: list[tuple[int, ...]] | None = None
 
   if dtype is None:
     dtype = np.result_type(*arrays) if arrays else np.float64
   else:
     dtype = np.dtype(dtype)
 
-  if backend.startswith("max"):
+  if ir or backend.startswith("max") or backend == "native":
     if _is_explicit_path(optimize):
       path = _validate_explicit_path(cast("Sequence[Sequence[int]]", optimize), len(operands))
     else:
-      path = einsum_path(eq, *[tuple(a.shape) for a in arrays], optimize=cast("str", optimize))
+      path = einsum_path(eq, *[tuple(shape) for shape in shapes], optimize=cast("str", optimize))
+
+  if ir:
+    from ._lowering import dump_lowering_ir
+
+    dump_lowering_ir(
+      eq,
+      [tuple(shape) for shape in shapes],
+      optimize=optimize,
+      backend=backend,
+      path=path,
+    )
+
+  if backend.startswith("max"):
+    if path is None:
+      raise RuntimeError("internal error: missing optimized path for MAX backend")
     max_arrays = [a.astype(dtype, copy=False) for a in arrays]
     out = _execute_max(eq, max_arrays, path, backend, accum_dtype=cast("np.dtype | None", accum_dtype))
     if out.dtype != dtype:
@@ -274,13 +299,10 @@ def einsum(
     return _from_numpy(out, target)
 
   flats = [a.astype(np.float64).ravel().tolist() for a in arrays]
-  shapes = [list(a.shape) for a in arrays]
 
   if backend == "native":
-    if _is_explicit_path(optimize):
-      path = _validate_explicit_path(cast("Sequence[Sequence[int]]", optimize), len(operands))
-    else:
-      path = einsum_path(eq, *[tuple(a.shape) for a in arrays], optimize=cast("str", optimize))
+    if path is None:
+      raise RuntimeError("internal error: missing optimized path for native backend")
     flat_out, out_shape = _einsum_native_backend(eq, flats, shapes, path)
   else:
     flat_out, out_shape = _einsum_reference_native(eq, flats, shapes)

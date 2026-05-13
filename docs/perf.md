@@ -99,6 +99,12 @@ when the equation has no ellipsis, the Mojo plan graph spec, and per-backend
 lowering records. For `max[:cpu|gpu]`, the record shows the concrete B/K/M/N
 split, broadcast inserts, BMM shape, whether operands are swapped to avoid a
 final transpose, the MAX Graph op target, and the Mojo TileTensor backend seam.
+During execution, pass `ir=True` to print the same JSON for the selected
+backend before computing the result:
+
+```python
+mp.einsum("ij,jk->ik", a, b, backend="max:cpu", ir=True)
+```
 
 When compiling through MAX, `moeinsum-bench` can enable MAX debug options
 before the runtime loads:

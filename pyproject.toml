@@ -1,8 +1,5 @@
 [build-system]
-requires = [
-  "mohaus>=0.1",
-  "modular",
-]
+requires = ["mohaus>=0.1", "modular"]
 build-backend = "mohaus.backend"
 
 [project]
@@ -19,17 +16,16 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Mathematics",
 ]
-dependencies = ["numpy>=2", "modular", "ml_dtypes>=0.5", "mohaus>=0.1"]
+dependencies = ["numpy>=2", "modular", "ml_dtypes>=0.5"]
 
 [project.scripts]
 moeinsum-bench = "moeinsum._cli.bench:main"
 moeinsum-lowering = "moeinsum._cli.lowering:main"
 
 [project.optional-dependencies]
-torch = ["torch>=2.4"]
-jax = ["jax>=0.4.30"]
-mlx = ["mlx>=0.20"]
-opt-einsum = ["opt_einsum>=3.3"]
+interop = ["torch>=2.4", "jax>=0.4.30", "mlx>=0.20", "opt_einsum>=3.3"]
+
+[dependency-groups]
 dev = [
   "pytest>=8",
   "pytest-xdist>=3",
@@ -37,10 +33,8 @@ dev = [
   "ruff>=0.5",
   "ty",
   "ipython",
+  "tqdm",
 ]
-
-[dependency-groups]
-bench = ["tqdm"]
 
 [tool.mohaus]
 module-name = "moeinsum._native"
@@ -71,3 +65,4 @@ extra-index-url = [
   "https://aarnphm.github.io/mohaus/simple",
   "https://whl.modular.com/nightly/simple/",
 ]
+prerelease = "allow"

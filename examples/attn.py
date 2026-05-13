@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import math, moeinsum as mp, monpy as np
+import moeinsum as mp
+import numpy as np
 
 
 # q: [B, Q, H, D]
@@ -20,7 +21,7 @@ def attn_einsum_bshd(q, k, v, mask=None, scale=None):
   if scale is None:
     scale = 1.0 / np.sqrt(q.shape[-1])
 
-  scores = mp.einsum("bqhd,bkhd->bhqk", q, k) * scale
+  scores = mp.einsum("bqhd,bkhd->bhqk", q, k, ir=True) * scale
 
   if mask is not None:
     # mask can be [B, Q, K], [B, 1, Q, K], or [B, H, Q, K]
