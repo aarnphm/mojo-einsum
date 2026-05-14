@@ -34,6 +34,7 @@ if TYPE_CHECKING:
   from numpy.typing import DTypeLike
   from typing_extensions import CapsuleType
 
+import ml_dtypes
 import numpy as np
 
 _ZERO_COPY_DLPACK_SOURCES = ("torch", "jax", "mlx", "cupy", "tensorflow")
@@ -47,6 +48,19 @@ _MODULE_ALIASES = {
   "jaxlib": "jax",
 }
 
+_TORCH_DTYPE_NAMES = {
+  "torch.float16": "float16",
+  "torch.float32": "float32",
+  "torch.float64": "float64",
+  "torch.bfloat16": "bfloat16",
+  "torch.int8": "int8",
+  "torch.int16": "int16",
+  "torch.int32": "int32",
+  "torch.int64": "int64",
+  "torch.uint8": "uint8",
+  "torch.bool": "bool",
+}
+
 
 class _DLPackSource(Protocol):
   def __dlpack__(self, *, stream: None = None) -> CapsuleType: ...
@@ -54,7 +68,35 @@ class _DLPackSource(Protocol):
   def __dlpack_device__(self) -> tuple[int, int]: ...
 
 
-def _looks_like_dlpack_source(obj: object) -> TypeGuard[_DLPackSource]:
+def shape_of(obj: object) -> tuple[int, ...]:
+  """Return an array-like object's shape without forcing host materialization."""
+  shape = getattr(obj, "shape", None)
+  if shape is not None:
+    return tuple(int(dim) for dim in shape)
+  return tuple(np.asarray(obj).shape)
+
+
+def dtype_of(obj: object) -> np.dtype:
+  """Return an array-like object's dtype without forcing host materialization."""
+  dtype = getattr(obj, "dtype", None)
+  if dtype is None:
+    return np.asarray(obj).dtype
+  try:
+    return np.dtype(dtype)
+  except TypeError:
+    dtype_name = _TORCH_DTYPE_NAMES.get(str(dtype))
+    if dtype_name is not None:
+      if dtype_name == "bfloat16":
+        return np.dtype(ml_dtypes.bfloat16)
+      return np.dtype(dtype_name)
+    # ml_dtypes exposes names that NumPy may not know as dtype objects.
+    if str(dtype) in {"bfloat16", "<class 'ml_dtypes.bfloat16'>"}:
+      return np.dtype(ml_dtypes.bfloat16)
+    return np.asarray(obj).dtype
+
+
+def is_dlpack_array(obj: object) -> TypeGuard[_DLPackSource]:
+  """True for non-NumPy arrays that expose DLPack plus device metadata."""
   if isinstance(obj, np.ndarray):
     return False
   return hasattr(obj, "__dlpack__") and hasattr(obj, "__dlpack_device__")
@@ -71,7 +113,7 @@ def to_numpy(
   back to `np.asarray` otherwise. The result is always C-contiguous.
   `dtype` defaults to None, preserving the source dtype.
   """
-  if _looks_like_dlpack_source(obj):
+  if is_dlpack_array(obj):
     try:
       candidate = np.from_dlpack(obj)
     except (TypeError, RuntimeError, BufferError):

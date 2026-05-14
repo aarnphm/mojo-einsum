@@ -45,7 +45,7 @@ $$t = \sum_i A_{ii}$$
 
 Collapse the diagonal first (the repeated-`i` constraint), then sum out the surviving `i`. Result is a scalar.
 
-**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's rule: every label appearing exactly once across all inputs, sorted alphabetically, is the output. So `"ij"` equals `"ij->ij"`, and `"ii"` equals `"ii->"` (every label appears more than once, so the output has no labels - a scalar).
+**Implicit output.** `"ij"` with no `->` means "infer the output." NumPy's behaviour for inferring the output is that every label appearing exactly once across all inputs, sorted alphabetically. So `"ij"` equals `"ij->ij"`, and `"ii"` equals `"ii->"` (every label appears more than once, so the output has no labels, or _a scalar_).
 
 ## Two-operand operations
 
@@ -108,7 +108,7 @@ Bellman's matrix-chain example shows why the choice matters by orders of magnitu
 | $(AB)C$ | $100 \cdot 1 \cdot 10^5 = 10^7$ | $100 \times 10^5$ | $100 \cdot 10^5 \cdot 1 = 10^7$ | $\sim 2 \cdot 10^7$ |
 | $A(BC)$ | $1 \cdot 10^5 \cdot 1 = 10^5$   | $1 \times 1$      | $100 \cdot 1 \cdot 1 = 100$     | $\sim 10^5$         |
 
-200x in FLOPs, $10^7$x in peak intermediate memory.[^moe] Path selection is its own optimization problem; moeinsum implements `opt_einsum`'s family natively (`greedy`, `optimal`, `random-greedy`, `branch`, `auto`). Algorithms in `derivations.md`.
+200x in FLOPs, $10^7$x in peak intermediate memory.[^moe] Path selection is its own optimization problem; moeinsum implements `opt_einsum`'s family natively (`greedy`, `optimal`, `random-greedy`, `branch`, `auto`). Algorithms in [[derivations]].
 
 [^moe]: This shape pattern shows up in MoE routing: a wide ephemeral activation between two narrow projections.
 

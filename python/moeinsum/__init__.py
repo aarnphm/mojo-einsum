@@ -28,7 +28,9 @@ import numpy as np
 from numpy.typing import DTypeLike
 
 from ._cache import PLAN_CACHE
+from ._interop import dtype_of as _dtype_of
 from ._interop import from_numpy as _from_numpy
+from ._interop import shape_of as _shape_of
 from ._interop import source_kind as _source_kind
 from ._interop import to_numpy as _to_numpy
 from ._interop_max import execute_max as _execute_max
@@ -255,16 +257,14 @@ def einsum(
   if not operands:
     raise ValueError("einsum requires at least one operand")
 
-  # Lift every operand to a contiguous numpy view via DLPack-first.
-  # Preserve dtype here so `result_type` reflects what the user passed;
-  # the fp64 conversion is a reference-backend FFI detail applied at the
-  # kernel boundary, not at the API surface.
-  arrays = [_to_numpy(o) for o in operands]
-  shapes = [list(a.shape) for a in arrays]
+  # MAX can consume DLPack device arrays directly. Keep shape/dtype discovery
+  # metadata-only here so CUDA tensors do not get pulled back to host before
+  # the backend has a chance to build MAX Buffers from them.
+  shapes = [list(_shape_of(o)) for o in operands]
   path: list[tuple[int, ...]] | None = None
 
   if dtype is None:
-    dtype = np.result_type(*arrays) if arrays else np.float64
+    dtype = np.result_type(*[_dtype_of(o) for o in operands]) if operands else np.float64
   else:
     dtype = np.dtype(dtype)
 
@@ -288,15 +288,25 @@ def einsum(
   if backend.startswith("max"):
     if path is None:
       raise RuntimeError("internal error: missing optimized path for MAX backend")
-    max_arrays = [a.astype(dtype, copy=False) for a in arrays]
-    out = _execute_max(eq, max_arrays, path, backend, accum_dtype=cast("np.dtype | None", accum_dtype))
-    if out.dtype != dtype:
-      out = out.astype(dtype)
     if return_type is None:
       target = _source_kind(operands[0])
     else:
       target = return_type
-    return _from_numpy(out, target)
+    return _execute_max(
+      eq,
+      list(operands),
+      path,
+      backend,
+      dtype=np.dtype(dtype),
+      accum_dtype=cast("np.dtype | None", accum_dtype),
+      return_type=target,
+    )
+
+  # Lift non-MAX operands to a contiguous numpy view via DLPack-first.
+  # Preserve dtype here so `result_type` reflects what the user passed;
+  # the fp64 conversion is a reference-backend FFI detail applied at the
+  # kernel boundary, not at the API surface.
+  arrays = [_to_numpy(o) for o in operands]
 
   flats = [a.astype(np.float64).ravel().tolist() for a in arrays]
 

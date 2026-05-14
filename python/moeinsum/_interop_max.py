@@ -20,6 +20,10 @@ from typing import TYPE_CHECKING, Protocol, cast
 import ml_dtypes
 import numpy as np
 
+from ._interop import dtype_of as _dtype_of
+from ._interop import from_numpy as _from_numpy
+from ._interop import is_dlpack_array as _is_dlpack_array
+from ._interop import shape_of as _shape_of
 from ._native import einsum_max_f32_cpu_ptrs as _einsum_max_f32_cpu_ptrs_native
 from ._native import einsum_max_f64_cpu_ptrs as _einsum_max_f64_cpu_ptrs_native
 from ._native import parse_equation_expanded as _parse_equation_expanded_native
@@ -71,6 +75,12 @@ _NATIVE_MAX_CPU: dict[str, _NativeMaxEntrypoint] = {
 _NATIVE_MAX_GPU_NAMES = {
   "float32": "einsum_max_f32_gpu_ptrs",
   "float64": "einsum_max_f64_gpu_ptrs",
+}
+_TORCH_DTYPE_NAMES = {
+  "float16": "float16",
+  "float32": "float32",
+  "float64": "float64",
+  "bfloat16": "bfloat16",
 }
 
 
@@ -670,6 +680,69 @@ def _input_buffer(arr: np.ndarray, device: Device) -> Buffer:
   return Buffer.from_numpy(arr).to(device)
 
 
+def _torch_dtype(dtype: np.dtype) -> object:
+  import torch  # noqa: PLC0415
+
+  name = dtype.name
+  if name == "bfloat16":
+    return torch.bfloat16
+  torch_name = _TORCH_DTYPE_NAMES.get(name)
+  if torch_name is None:
+    raise NotImplementedError(f"backend='max' cannot build a torch DLPack buffer for dtype {dtype}")
+  return getattr(torch, torch_name)
+
+
+def _prepare_dlpack_operand(obj: object, dtype: np.dtype, keepalive: list[object]) -> object:
+  """Return a contiguous DLPack source, preserving temporaries for Buffer lifetime."""
+  module = type(obj).__module__.split(".", 1)[0]
+  prepared = obj
+  if module == "torch":
+    import torch  # noqa: PLC0415
+
+    if not isinstance(prepared, torch.Tensor):
+      raise TypeError(f"expected torch.Tensor, got {type(prepared).__name__}")
+    target_dtype = _torch_dtype(dtype)
+    if prepared.dtype != target_dtype:
+      prepared = prepared.to(dtype=target_dtype)
+    if not prepared.is_contiguous():
+      prepared = prepared.contiguous()
+  keepalive.append(prepared)
+  return prepared
+
+
+def _host_numpy_operand(obj: object, dtype: np.dtype) -> np.ndarray:
+  module = type(obj).__module__.split(".", 1)[0]
+  if module == "torch":
+    import torch  # noqa: PLC0415
+
+    if isinstance(obj, torch.Tensor):
+      obj = obj.detach().cpu().numpy()
+  return np.ascontiguousarray(np.asarray(obj).astype(dtype, copy=False))
+
+
+def _buffer_on_device(buffer: Buffer, device: Device) -> Buffer:
+  if getattr(buffer, "device", None) == device:
+    return buffer
+  return buffer.to(device)
+
+
+def _graph_input_buffer(obj: object, dtype: np.dtype, device: Device, keepalive: list[object]) -> Buffer:
+  """Array-like -> MAX Buffer without copying CUDA DLPack inputs through NumPy."""
+  if isinstance(obj, np.ndarray):
+    return _input_buffer(np.ascontiguousarray(obj.astype(dtype, copy=False)), device)
+
+  if _is_dlpack_array(obj):
+    prepared = _prepare_dlpack_operand(obj, dtype, keepalive)
+    try:
+      return _buffer_on_device(Buffer.from_dlpack(prepared), device)
+    except (TypeError, RuntimeError, BufferError):
+      pass
+
+  arr = _host_numpy_operand(obj, dtype)
+  keepalive.append(arr)
+  return _input_buffer(arr, device)
+
+
 def _read_output(buf: Buffer) -> np.ndarray:
   """MAX Buffer -> numpy with a uint16 detour for bf16 (inverse of `_input_buffer`)."""
   host = buf.to(CPU())
@@ -677,6 +750,27 @@ def _read_output(buf: Buffer) -> np.ndarray:
     u16_buf = host.view(DType.uint16, host.shape)
     return u16_buf.to_numpy().view(np.dtype(ml_dtypes.bfloat16))
   return host.to_numpy()
+
+
+def _buffer_to_return_type(buf: Buffer, dtype: np.dtype, return_type: str) -> object:
+  if return_type == "torch":
+    import torch  # noqa: PLC0415
+
+    out = torch.from_dlpack(buf)
+    target_dtype = _torch_dtype(dtype)
+    if out.dtype != target_dtype:
+      out = out.to(dtype=target_dtype)
+    return out
+  out = _read_output(buf)
+  if out.dtype != dtype:
+    out = out.astype(dtype)
+  return _from_numpy(out, return_type)
+
+
+def _numpy_to_return_type(out: np.ndarray, dtype: np.dtype, return_type: str) -> object:
+  if out.dtype != dtype:
+    out = out.astype(dtype)
+  return _from_numpy(out, return_type)
 
 
 def _row_major_strides(shape: Sequence[int]) -> list[int]:
@@ -695,6 +789,8 @@ def _native_max_cpu_func(dtype: np.dtype) -> _NativeMaxEntrypoint | None:
 
 
 def _native_max_gpu_func(dtype: np.dtype) -> _NativeMaxEntrypoint | None:
+  if os.environ.get("MOEINSUM_ENABLE_NATIVE_GPU") != "1":
+    return None
   func_name = _NATIVE_MAX_GPU_NAMES.get(np.dtype(dtype).name)
   if func_name is None:
     return None
@@ -704,7 +800,10 @@ def _native_max_gpu_func(dtype: np.dtype) -> _NativeMaxEntrypoint | None:
     if exc.name == f"{__package__}._native_gpu":
       return None
     raise
-  return cast("_NativeMaxEntrypoint", getattr(module, func_name))
+  func = getattr(module, func_name, None)
+  if func is None:
+    return None
+  return cast("_NativeMaxEntrypoint", func)
 
 
 def _rank_preserving_contiguous(array: np.ndarray) -> np.ndarray:
@@ -775,21 +874,26 @@ def _execute_max_native(
 
 def _execute_max_graph(
   eq: str,
-  arrays: list[np.ndarray],
+  operands: Sequence[object],
   path: list[tuple[int, ...]],
   backend: str,
+  dtype: np.dtype | None = None,
   accum_dtype: np.dtype | None = None,
-) -> np.ndarray:
+  return_type: str = "numpy",
+) -> object:
   _prefer_packaged_modular_runtime()
 
-  if not arrays:
+  if not operands:
     raise ValueError("einsum requires at least one operand")
-  dtype = np.result_type(*arrays)
+  if dtype is None:
+    dtype = np.result_type(*[_dtype_of(operand) for operand in operands])
+  else:
+    dtype = np.dtype(dtype)
   _max_dtype_for(dtype)
   max_accum_dtype = _max_accum_dtype_for(dtype, accum_dtype)
   accum_key = str(_default_accum_dtype(dtype) if accum_dtype is None else accum_dtype)
 
-  shapes = [tuple(array.shape) for array in arrays]
+  shapes = [_shape_of(operand) for operand in operands]
   key = (eq, tuple(shapes), str(dtype), accum_key, tuple(path), backend)
   with _MODEL_CACHE_LOCK:
     executable = _MODEL_CACHE.get(key)
@@ -801,46 +905,59 @@ def _execute_max_graph(
     else:
       _MODEL_CACHE.move_to_end(key)
 
-  max_arrays = [np.ascontiguousarray(array.astype(executable.input_dtype, copy=False)) for array in arrays]
-  inputs = [_input_buffer(array, executable.device) for array in max_arrays]
+  keepalive: list[object] = []
+  inputs = [
+    _graph_input_buffer(operand, executable.input_dtype, executable.device, keepalive)
+    for operand in operands
+  ]
   result = executable.model.execute(*inputs)[0]
   if not isinstance(result, Buffer):
     raise TypeError(f"MAX model returned {type(result).__name__}, expected Buffer")
-  out = _read_output(result)
-  if out.dtype != dtype:
-    out = out.astype(dtype)
-  return out
+  return _buffer_to_return_type(result, dtype, return_type)
 
 
 def execute_max(
   eq: str,
-  arrays: list[np.ndarray],
+  operands: Sequence[object],
   path: list[tuple[int, ...]],
   backend: str,
+  dtype: np.dtype | None = None,
   accum_dtype: np.dtype | None = None,
-) -> np.ndarray:
-  dtype = np.result_type(*arrays)
+  return_type: str = "numpy",
+) -> object:
+  if dtype is None:
+    dtype = np.result_type(*[_dtype_of(operand) for operand in operands])
+  else:
+    dtype = np.dtype(dtype)
   if accum_dtype is None:
     if backend == "max:cpu":
       native_cpu = _native_max_cpu_func(dtype)
       if native_cpu is not None:
-        return _execute_max_native(eq, arrays, path, CPU(), native_cpu)
+        arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
+        out = _execute_max_native(eq, arrays, path, CPU(), native_cpu)
+        return _numpy_to_return_type(out, dtype, return_type)
     if backend == "max:gpu":
       native_gpu = _native_max_gpu_func(dtype)
       if native_gpu is not None:
         if accelerator_count() == 0:
           raise RuntimeError("backend='max:gpu' requested but MAX reports no accelerator")
-        return _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+        arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
+        out = _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+        return _numpy_to_return_type(out, dtype, return_type)
     if backend == "max":
       if accelerator_count() > 0:
         native_gpu = _native_max_gpu_func(dtype)
         if native_gpu is not None:
-          return _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+          arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
+          out = _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+          return _numpy_to_return_type(out, dtype, return_type)
       else:
         native_cpu = _native_max_cpu_func(dtype)
         if native_cpu is not None:
-          return _execute_max_native(eq, arrays, path, CPU(), native_cpu)
-  return _execute_max_graph(eq, arrays, path, backend, accum_dtype)
+          arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
+          out = _execute_max_native(eq, arrays, path, CPU(), native_cpu)
+          return _numpy_to_return_type(out, dtype, return_type)
+  return _execute_max_graph(eq, operands, path, backend, dtype=dtype, accum_dtype=accum_dtype, return_type=return_type)
 
 
 class MaxGraphBackend:

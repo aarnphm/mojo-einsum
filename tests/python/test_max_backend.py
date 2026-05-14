@@ -89,6 +89,29 @@ def test_public_max_cpu_bypasses_python_graph_cache() -> None:
   assert len(_interop_max._MODEL_CACHE) == 0
 
 
+def test_max_gpu_torch_cuda_returns_cuda_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
+  torch = pytest.importorskip("torch")
+  if not torch.cuda.is_available():
+    pytest.skip("CUDA is not available")
+
+  monkeypatch.setattr(_interop_max, "_native_max_gpu_func", lambda dtype: None)
+  _interop_max._MODEL_CACHE.clear()
+  previous_tf32 = torch.backends.cuda.matmul.allow_tf32
+  torch.backends.cuda.matmul.allow_tf32 = True
+  try:
+    a = torch.randn((64, 64), device="cuda", dtype=torch.float32)
+    b = torch.randn((64, 64), device="cuda", dtype=torch.float32)
+
+    actual = moeinsum.einsum("ij,jk->ik", a, b, backend="max:gpu")
+    expected = torch.einsum("ij,jk->ik", a, b)
+
+    assert isinstance(actual, torch.Tensor)
+    assert actual.is_cuda
+    torch.testing.assert_close(actual, expected, atol=1e-1, rtol=1e-2)
+  finally:
+    torch.backends.cuda.matmul.allow_tf32 = previous_tf32
+
+
 def test_max_backend_model_cache_reuses_compiled_graph() -> None:
   """Identical (eq, shapes, dtype, path, backend) must reuse one compiled graph.
 

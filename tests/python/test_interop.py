@@ -14,7 +14,7 @@ from types import ModuleType
 import moeinsum
 import numpy as np
 import pytest
-from moeinsum._interop import from_numpy, source_kind, to_numpy
+from moeinsum._interop import dtype_of, from_numpy, shape_of, source_kind, to_numpy
 
 
 def test_source_kind_numpy() -> None:
@@ -107,6 +107,15 @@ def _try_import(name: str) -> ModuleType | None:
 _torch = _try_import("torch")
 _jax = _try_import("jax")
 _mlx = _try_import("mlx") if _try_import("mlx.core") else None
+
+
+@pytest.mark.skipif(_torch is None, reason="torch not installed")
+def test_shape_and_dtype_from_torch_metadata() -> None:
+  assert _torch is not None
+  tensor = _torch.zeros((2, 3), dtype=_torch.float32)
+
+  assert shape_of(tensor) == (2, 3)
+  assert dtype_of(tensor) == np.dtype("float32")
 
 
 @pytest.mark.skipif(_torch is None, reason="torch not installed")
