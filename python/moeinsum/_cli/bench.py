@@ -57,7 +57,7 @@ import statistics
 import sys
 import sysconfig
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -113,20 +113,118 @@ def _parse_shapes(shape_strs: list[str]) -> list[tuple[int, ...]]:
   return out
 
 
-def _make_operands(shapes: list[tuple[int, ...]], dtype: np.dtype, seed: int) -> list[np.ndarray]:
+def _make_numpy_operands(shapes: list[tuple[int, ...]], dtype: np.dtype, seed: int) -> list[np.ndarray]:
   rng = np.random.default_rng(seed)
   return [rng.standard_normal(s).astype(dtype) for s in shapes]
 
 
+def _torch_dtype(dtype: np.dtype) -> object:
+  import torch  # noqa: PLC0415
+
+  name = np.dtype(dtype).name
+  if name == "bfloat16":
+    return torch.bfloat16
+  torch_dtype = getattr(torch, name, None)
+  if torch_dtype is None:
+    raise NotImplementedError(f"torch benchmark operands do not support dtype {dtype}")
+  return torch_dtype
+
+
+def _make_torch_operands(
+  arrays: Sequence[np.ndarray],
+  *,
+  dtype: np.dtype,
+  device: str,
+) -> list[object]:
+  import torch  # noqa: PLC0415
+
+  if device == "cuda" and not torch.cuda.is_available():
+    raise RuntimeError("--input-device cuda requested, but torch.cuda.is_available() is false")
+  torch_dtype = _torch_dtype(dtype)
+  out: list[object] = []
+  for array in arrays:
+    if dtype.name == "bfloat16":
+      tensor = torch.as_tensor(array.astype("float32"), device=device).to(dtype=torch_dtype)
+    else:
+      tensor = torch.from_numpy(array).to(device=device, dtype=torch_dtype)
+    out.append(tensor.contiguous())
+  return out
+
+
+def _make_operands(
+  shapes: list[tuple[int, ...]],
+  dtype: np.dtype,
+  seed: int,
+  *,
+  input_framework: str,
+  input_device: str,
+) -> tuple[list[np.ndarray], list[object]]:
+  numpy_operands = _make_numpy_operands(shapes, dtype, seed)
+  if input_framework == "numpy":
+    if input_device != "cpu":
+      raise ValueError("numpy benchmark operands only support --input-device cpu")
+    return numpy_operands, list(numpy_operands)
+  if input_framework == "torch":
+    return numpy_operands, _make_torch_operands(numpy_operands, dtype=dtype, device=input_device)
+  raise ValueError(f"unknown input framework {input_framework!r}")
+
+
+def _torch_cuda_sync_for_operands(operands: Sequence[object]) -> Callable[[], None] | None:
+  if not operands:
+    return None
+  module = type(operands[0]).__module__.split(".", 1)[0]
+  if module != "torch":
+    return None
+  import torch  # noqa: PLC0415
+
+  if any(isinstance(operand, torch.Tensor) and operand.is_cuda for operand in operands):
+    return torch.cuda.synchronize
+  return None
+
+
+def _all_torch_operands(operands: Sequence[object]) -> bool:
+  if not operands:
+    return False
+  return type(operands[0]).__module__.split(".", 1)[0] == "torch"
+
+
+def _configure_torch_bench(
+  *,
+  allow_tf32: bool | None,
+  matmul_precision: str | None,
+  record: bool,
+) -> dict[str, object] | None:
+  if allow_tf32 is None and matmul_precision is None and not record:
+    return None
+
+  import torch  # noqa: PLC0415
+
+  if allow_tf32 is not None:
+    torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+    if hasattr(torch.backends, "cudnn"):
+      torch.backends.cudnn.allow_tf32 = allow_tf32
+  if matmul_precision is not None:
+    torch.set_float32_matmul_precision(matmul_precision)
+  return {
+    "allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+    "float32_matmul_precision": torch.get_float32_matmul_precision(),
+  }
+
+
 def _time_one(
   eq: str,
-  operands: list[np.ndarray],
+  operands: Sequence[object],
   backend: str,
   optimize: str,
+  sync: Callable[[], None] | None = None,
 ) -> float:
   """Return wall time of one einsum call, in milliseconds."""
+  if sync is not None:
+    sync()
   t0 = time.perf_counter()
   einsum(eq, *operands, backend=backend, optimize=optimize)
+  if sync is not None:
+    sync()
   t1 = time.perf_counter()
   return (t1 - t0) * 1000.0
 
@@ -239,14 +337,21 @@ def _time_callable(
   warmup: int,
   desc: str,
   show_progress: bool,
+  sync: Callable[[], None] | None = None,
 ) -> dict[str, object]:
   for _ in _progress_range(warmup, desc=f"warmup {desc}", enabled=show_progress):
     fn()
+    if sync is not None:
+      sync()
 
   timings: list[float] = []
   for _ in _progress_range(repeats, desc=f"bench {desc}", enabled=show_progress):
+    if sync is not None:
+      sync()
     t0 = time.perf_counter()
     fn()
+    if sync is not None:
+      sync()
     t1 = time.perf_counter()
     timings.append((t1 - t0) * 1000.0)
 
@@ -261,66 +366,73 @@ def _time_callable(
 def _compare_callable(
   engine: str,
   eq: str,
-  operands: list[np.ndarray],
+  numpy_operands: list[np.ndarray],
+  primary_operands: Sequence[object],
   optimize: str,
-) -> Callable[[], object]:
+) -> tuple[Callable[[], object], Callable[[], None] | None]:
   if engine == "numpy":
-    if operands and operands[0].dtype.name == "bfloat16":
+    if numpy_operands and numpy_operands[0].dtype.name == "bfloat16":
       raise ImportError("numpy.einsum upgrades bf16 to fp32 silently; skipping to avoid a misleading measurement")
-    return lambda: np.einsum(eq, *operands, optimize=True)
+    return lambda: np.einsum(eq, *numpy_operands, optimize=True), None
 
   if engine == "opt_einsum":
     import opt_einsum  # noqa: PLC0415
 
+    operands = primary_operands if _all_torch_operands(primary_operands) else numpy_operands
+    sync = _torch_cuda_sync_for_operands(operands)
     contract = cast("Callable[..., object]", opt_einsum.contract)
     if optimize == "naive":
-      return lambda: contract(eq, *operands, optimize=False)
+      return lambda: contract(eq, *operands, optimize=False), sync
     if optimize == "greedy":
-      return lambda: contract(eq, *operands, optimize="greedy")
+      return lambda: contract(eq, *operands, optimize="greedy"), sync
     if optimize == "optimal":
-      return lambda: contract(eq, *operands, optimize="optimal")
+      return lambda: contract(eq, *operands, optimize="optimal"), sync
     if optimize == "branch-all":
-      return lambda: contract(eq, *operands, optimize="branch-all")
+      return lambda: contract(eq, *operands, optimize="branch-all"), sync
     if optimize == "branch-2":
-      return lambda: contract(eq, *operands, optimize="branch-2")
+      return lambda: contract(eq, *operands, optimize="branch-2"), sync
     if optimize == "branch-1":
-      return lambda: contract(eq, *operands, optimize="branch-1")
+      return lambda: contract(eq, *operands, optimize="branch-1"), sync
     if optimize.startswith("random-greedy"):
-      return lambda: contract(eq, *operands, optimize="random-greedy")
-    return lambda: contract(eq, *operands, optimize="auto")
+      return lambda: contract(eq, *operands, optimize="random-greedy"), sync
+    return lambda: contract(eq, *operands, optimize="auto"), sync
 
   if engine == "jax":
     import jax  # noqa: PLC0415
 
-    if any(arr.dtype == np.float64 for arr in operands):
+    if any(arr.dtype == np.float64 for arr in numpy_operands):
       jax.config.update("jax_enable_x64", True)
     import jax.numpy as jnp  # noqa: PLC0415
 
-    jax_operands = [jnp.asarray(arr) for arr in operands]
+    jax_operands = [jnp.asarray(arr) for arr in numpy_operands]
 
     def run_jax() -> object:
       out = jnp.einsum(eq, *jax_operands, optimize=True)
       return out.block_until_ready()
 
-    return run_jax
+    return run_jax, None
 
   if engine == "torch":
     import torch  # noqa: PLC0415
 
-    torch_operands = [torch.from_numpy(arr) for arr in operands]
-    return lambda: torch.einsum(eq, *torch_operands)
+    if _all_torch_operands(primary_operands):
+      torch_operands = list(primary_operands)
+    else:
+      torch_operands = [torch.from_numpy(arr) for arr in numpy_operands]
+    sync = _torch_cuda_sync_for_operands(torch_operands)
+    return lambda: torch.einsum(eq, *torch_operands), sync
 
   if engine == "mlx":
     mx = importlib.import_module("mlx.core")
 
-    mlx_operands = [mx.array(arr) for arr in operands]
+    mlx_operands = [mx.array(arr) for arr in numpy_operands]
 
     def run_mlx() -> object:
       out = mx.einsum(eq, *mlx_operands)
       mx.eval(out)
       return out
 
-    return run_mlx
+    return run_mlx, None
 
   raise ValueError(f"unknown compare engine {engine!r}")
 
@@ -329,7 +441,8 @@ def _run_comparisons(
   *,
   engines: list[str],
   eq: str,
-  operands: list[np.ndarray],
+  numpy_operands: list[np.ndarray],
+  primary_operands: Sequence[object],
   optimize: str,
   repeats: int,
   warmup: int,
@@ -347,7 +460,7 @@ def _run_comparisons(
 
   for engine in engines:
     try:
-      fn = _compare_callable(engine, eq, operands, optimize)
+      fn, sync = _compare_callable(engine, eq, numpy_operands, primary_operands, optimize)
     except ModuleNotFoundError as exc:
       comparisons[engine] = {"status": "skipped", "reason": f"missing import: {exc.name}"}
       continue
@@ -362,6 +475,7 @@ def _run_comparisons(
         warmup=warmup,
         desc=engine,
         show_progress=show_progress,
+        sync=sync,
       )
     except Exception as exc:  # noqa: BLE001 - comparison engines should not kill the primary bench
       comparisons[engine] = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
@@ -456,6 +570,36 @@ def main(argv: list[str] | None = None) -> int:
       "reason since they do not support bf16 natively."
     ),
   )
+  p.add_argument(
+    "--input-framework",
+    default="numpy",
+    choices=["numpy", "torch"],
+    help=(
+      "Framework used to allocate primary benchmark operands. Use "
+      "`--input-framework torch --input-device cuda` to measure MAX from "
+      "CUDA-resident DLPack operands instead of NumPy host arrays."
+    ),
+  )
+  p.add_argument(
+    "--input-device",
+    default="cpu",
+    choices=["cpu", "cuda"],
+    help="Device for primary benchmark operands. `cuda` currently requires --input-framework torch.",
+  )
+  p.add_argument(
+    "--torch-allow-tf32",
+    action=argparse.BooleanOptionalAction,
+    default=None,
+    help=(
+      "Set torch.backends.cuda.matmul.allow_tf32 and cudnn.allow_tf32 before "
+      "benchmarks. Useful because MAX GPU matmul may use TF32 on NVIDIA."
+    ),
+  )
+  p.add_argument(
+    "--torch-matmul-precision",
+    choices=["highest", "high", "medium"],
+    help="Forwarded to torch.set_float32_matmul_precision for torch comparison rows.",
+  )
   p.add_argument("--repeats", type=int, default=11, help="Number of runs")
   p.add_argument("--warmup", type=int, default=2, help="Warmup runs (untimed)")
   p.add_argument("--seed", type=int, default=0, help="Operand-RNG seed")
@@ -544,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
     compare_engines = []
   if args.sweep_optimizers and compare_engines:
     p.error("--compare, --compare-engines, and --vs-numpy cannot be combined with --sweep-optimizers")
+  if args.input_framework == "numpy" and args.input_device != "cpu":
+    p.error("--input-device cuda requires --input-framework torch")
 
   shapes = _parse_shapes(args.shapes)
   if args.dtype == "bfloat16":
@@ -552,7 +698,22 @@ def main(argv: list[str] | None = None) -> int:
     dtype = np.dtype(ml_dtypes.bfloat16)
   else:
     dtype = np.dtype(args.dtype)
-  operands = _make_operands(shapes, dtype, args.seed)
+  try:
+    torch_config = _configure_torch_bench(
+      allow_tf32=args.torch_allow_tf32,
+      matmul_precision=args.torch_matmul_precision,
+      record=args.input_framework == "torch",
+    )
+    numpy_operands, operands = _make_operands(
+      shapes,
+      dtype,
+      args.seed,
+      input_framework=args.input_framework,
+      input_device=args.input_device,
+    )
+  except (ImportError, RuntimeError, ValueError, NotImplementedError) as exc:
+    p.error(str(exc))
+  primary_sync = _torch_cuda_sync_for_operands(operands)
   platform_record = {
     "machine": platform.machine(),
     "system": platform.system(),
@@ -577,9 +738,9 @@ def main(argv: list[str] | None = None) -> int:
     per_opt_medians: dict[str, float] = {}
     for opt in optimizers:
       for _ in _progress_range(args.warmup, desc=f"warmup {opt}", enabled=show_progress):
-        _time_one(args.equation, operands, args.backend, opt)
+        _time_one(args.equation, operands, args.backend, opt, sync=primary_sync)
       timings = [
-        _time_one(args.equation, operands, args.backend, opt)
+        _time_one(args.equation, operands, args.backend, opt, sync=primary_sync)
         for _ in _progress_range(args.repeats, desc=f"bench {opt}", enabled=show_progress)
       ]
       median = statistics.median(timings)
@@ -599,6 +760,8 @@ def main(argv: list[str] | None = None) -> int:
       "shapes": [list(s) for s in shapes],
       "backend": args.backend,
       "dtype": args.dtype,
+      "input_framework": args.input_framework,
+      "input_device": args.input_device,
       "repeats": args.repeats,
       "warmup": args.warmup,
       "results": per_opt,
@@ -611,17 +774,19 @@ def main(argv: list[str] | None = None) -> int:
       result["modular_debug"] = modular_debug
     if args.max_ir_output_dir:
       result["max_ir_output_dir"] = args.max_ir_output_dir
+    if torch_config is not None:
+      result["torch"] = torch_config
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
   # Warmup.
   for _ in _progress_range(args.warmup, desc="warmup moeinsum", enabled=show_progress):
-    _time_one(args.equation, operands, args.backend, args.optimize)
+    _time_one(args.equation, operands, args.backend, args.optimize, sync=primary_sync)
 
   timings = []
   for _ in _progress_range(args.repeats, desc="bench moeinsum", enabled=show_progress):
-    timings.append(_time_one(args.equation, operands, args.backend, args.optimize))
+    timings.append(_time_one(args.equation, operands, args.backend, args.optimize, sync=primary_sync))
 
   result = {
     "equation": args.equation,
@@ -629,6 +794,8 @@ def main(argv: list[str] | None = None) -> int:
     "backend": args.backend,
     "optimize": args.optimize,
     "dtype": args.dtype,
+    "input_framework": args.input_framework,
+    "input_device": args.input_device,
     "repeats": args.repeats,
     "warmup": args.warmup,
     "total_ms_median": statistics.median(timings),
@@ -641,6 +808,8 @@ def main(argv: list[str] | None = None) -> int:
     result["modular_debug"] = modular_debug
   if args.max_ir_output_dir:
     result["max_ir_output_dir"] = args.max_ir_output_dir
+  if torch_config is not None:
+    result["torch"] = torch_config
   if args.include_path:
     result["path"] = einsum_path(args.equation, *shapes, optimize=args.optimize)
 
@@ -648,8 +817,12 @@ def main(argv: list[str] | None = None) -> int:
     PLAN_CACHE.clear()
     # Cold call: empty the cache, time one un-cached execution. The cold path
     # pays parse + plan + path optimize + reference loop.
+    if primary_sync is not None:
+      primary_sync()
     t0 = time.perf_counter()
     einsum(args.equation, *operands, backend=args.backend, optimize=args.optimize)
+    if primary_sync is not None:
+      primary_sync()
     t1 = time.perf_counter()
     cold_ms = (t1 - t0) * 1000.0
 
@@ -657,7 +830,7 @@ def main(argv: list[str] | None = None) -> int:
     # Hot calls: cache is now populated. Subsequent invocations skip parse +
     # plan and go straight to the kernel.
     for _ in _progress_range(args.repeats, desc="cache-bench hot", enabled=show_progress):
-      hot_timings.append(_time_one(args.equation, operands, args.backend, args.optimize))
+      hot_timings.append(_time_one(args.equation, operands, args.backend, args.optimize, sync=primary_sync))
     hot_median = statistics.median(hot_timings)
     result["cold_ms"] = cold_ms
     result["hot_ms_median"] = hot_median
@@ -669,7 +842,8 @@ def main(argv: list[str] | None = None) -> int:
     comparison_result = _run_comparisons(
       engines=compare_engines,
       eq=args.equation,
-      operands=operands,
+      numpy_operands=numpy_operands,
+      primary_operands=operands,
       optimize=args.optimize,
       repeats=args.repeats,
       warmup=args.warmup,

@@ -9,6 +9,7 @@ tests still use the MAX Graph lowering in this module.
 from __future__ import annotations
 
 import os
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -124,11 +125,24 @@ class _Executable:
   model: Model
   device: Device
   input_dtype: np.dtype
+  direct_matmul: bool = False
 
 
 _MODEL_CACHE_MAX = 512
 _MODEL_CACHE: OrderedDict[tuple[object, ...], _Executable] = OrderedDict()
 _MODEL_CACHE_LOCK = RLock()
+
+
+@dataclass
+class _CachedDlpackBuffer:
+  ref: weakref.ReferenceType[object]
+  fingerprint: tuple[object, ...]
+  buffer: Buffer
+
+
+_DLPACK_BUFFER_CACHE_MAX = 256
+_DLPACK_BUFFER_CACHE: OrderedDict[int, _CachedDlpackBuffer] = OrderedDict()
+_DLPACK_BUFFER_CACHE_LOCK = RLock()
 
 
 @dataclass(frozen=True)
@@ -594,6 +608,50 @@ def _lower_graph(
     return graph
 
 
+def _is_direct_matmul(
+  eq: str,
+  shapes: list[tuple[int, ...]],
+  path: list[tuple[int, ...]],
+  dtype: DType,
+  accum_dtype: DType,
+) -> bool:
+  if len(shapes) != 2 or path != [(0, 1)]:
+    return False
+  if dtype != accum_dtype:
+    return False
+
+  inputs, final_output = _parse_equation(eq, shapes)
+  if len(inputs) != 2:
+    return False
+  lhs, rhs = inputs
+  if len(lhs) < 2 or len(rhs) < 2:
+    return False
+  if len(set(lhs)) != len(lhs) or len(set(rhs)) != len(rhs):
+    return False
+  if lhs[:-2] != rhs[:-2]:
+    return False
+  if lhs[-1] != rhs[-2]:
+    return False
+  lhs_shape, rhs_shape = shapes
+  if lhs_shape[:-2] != rhs_shape[:-2]:
+    return False
+  if lhs_shape[-1] != rhs_shape[-2]:
+    return False
+  return final_output == lhs[:-1] + rhs[-1]
+
+
+def _lower_direct_matmul_graph(
+  shapes: list[tuple[int, ...]],
+  dtype: DType,
+  device: Device,
+) -> Graph:
+  _ensure_max_graph_loaded()
+  input_types = [TensorType(dtype, shape=shape, device=DeviceRef.from_device(device)) for shape in shapes]
+  with Graph("moeinsum_max_direct_matmul", input_types=input_types) as graph:
+    graph.output(ops.matmul(graph.inputs[0].tensor, graph.inputs[1].tensor))
+    return graph
+
+
 def _select_device(backend: str) -> Device:
   if backend == "max:cpu":
     return CPU()
@@ -624,10 +682,20 @@ def _compile(
 
   device = _select_device(backend)
   input_dtype = _graph_input_dtype(public_dtype, device)
-  graph = _lower_graph(eq, shapes, path, _max_dtype_for(input_dtype), accum_dtype, device)
+  max_input_dtype = _max_dtype_for(input_dtype)
+  direct_matmul = _is_direct_matmul(eq, shapes, path, max_input_dtype, accum_dtype)
+  if direct_matmul:
+    graph = _lower_direct_matmul_graph(shapes, max_input_dtype, device)
+  else:
+    graph = _lower_graph(eq, shapes, path, max_input_dtype, accum_dtype, device)
   session = InferenceSession(devices=[device])
   try:
-    return _Executable(model=session.load(graph), device=device, input_dtype=input_dtype)
+    return _Executable(
+      model=session.load(graph),
+      device=device,
+      input_dtype=input_dtype,
+      direct_matmul=direct_matmul,
+    )
   except RuntimeError:
     if backend != "max":
       raise
@@ -636,9 +704,19 @@ def _compile(
       raise
     cpu = CPU()
     input_dtype = _graph_input_dtype(public_dtype, cpu)
-    graph = _lower_graph(eq, shapes, path, _max_dtype_for(input_dtype), accum_dtype, cpu)
+    max_input_dtype = _max_dtype_for(input_dtype)
+    direct_matmul = _is_direct_matmul(eq, shapes, path, max_input_dtype, accum_dtype)
+    if direct_matmul:
+      graph = _lower_direct_matmul_graph(shapes, max_input_dtype, cpu)
+    else:
+      graph = _lower_graph(eq, shapes, path, max_input_dtype, accum_dtype, cpu)
     session = InferenceSession(devices=[cpu])
-    return _Executable(model=session.load(graph), device=cpu, input_dtype=input_dtype)
+    return _Executable(
+      model=session.load(graph),
+      device=cpu,
+      input_dtype=input_dtype,
+      direct_matmul=direct_matmul,
+    )
 
 
 def _max_dtype_for(dtype: np.dtype) -> DType:
@@ -726,12 +804,95 @@ def _buffer_on_device(buffer: Buffer, device: Device) -> Buffer:
   return buffer.to(device)
 
 
+def _drop_cached_dlpack_buffer(key: int, ref: weakref.ReferenceType[object]) -> None:
+  with _DLPACK_BUFFER_CACHE_LOCK:
+    cached = _DLPACK_BUFFER_CACHE.get(key)
+    if cached is not None and cached.ref is ref:
+      _DLPACK_BUFFER_CACHE.pop(key, None)
+
+
+def _torch_tensor_fingerprint(tensor: object, device: Device) -> tuple[object, ...]:
+  return (
+    int(tensor.data_ptr()),
+    tuple(int(dim) for dim in tensor.shape),
+    tuple(int(stride) for stride in tensor.stride()),
+    str(tensor.dtype),
+    str(tensor.device),
+    repr(device),
+  )
+
+
+def _cache_dlpack_buffer(key: int, tensor: object, fingerprint: tuple[object, ...], buffer: Buffer) -> Buffer:
+  ref_box: list[weakref.ReferenceType[object]] = []
+
+  def remove(_ref: weakref.ReferenceType[object]) -> None:
+    if ref_box:
+      _drop_cached_dlpack_buffer(key, ref_box[0])
+
+  try:
+    ref = weakref.ref(tensor, remove)
+  except TypeError:
+    return buffer
+  ref_box.append(ref)
+
+  with _DLPACK_BUFFER_CACHE_LOCK:
+    _DLPACK_BUFFER_CACHE[key] = _CachedDlpackBuffer(ref=ref, fingerprint=fingerprint, buffer=buffer)
+    _DLPACK_BUFFER_CACHE.move_to_end(key)
+    while len(_DLPACK_BUFFER_CACHE) > _DLPACK_BUFFER_CACHE_MAX:
+      _DLPACK_BUFFER_CACHE.popitem(last=False)
+  return buffer
+
+
+def _cached_torch_input_buffer(obj: object, dtype: np.dtype, device: Device, keepalive: list[object]) -> Buffer | None:
+  import torch  # noqa: PLC0415
+
+  if not isinstance(obj, torch.Tensor):
+    return None
+
+  target_dtype = _torch_dtype(dtype)
+  if obj.dtype != target_dtype:
+    prepared = obj.to(dtype=target_dtype)
+    if not prepared.is_contiguous():
+      prepared = prepared.contiguous()
+    keepalive.append(prepared)
+    return _buffer_on_device(Buffer.from_dlpack(prepared), device)
+
+  if not obj.is_contiguous():
+    prepared = obj.contiguous()
+    keepalive.append(prepared)
+    return _buffer_on_device(Buffer.from_dlpack(prepared), device)
+
+  keepalive.append(obj)
+  fingerprint = _torch_tensor_fingerprint(obj, device)
+  key = id(obj)
+  with _DLPACK_BUFFER_CACHE_LOCK:
+    cached = _DLPACK_BUFFER_CACHE.get(key)
+    if cached is not None and cached.ref() is obj and cached.fingerprint == fingerprint:
+      _DLPACK_BUFFER_CACHE.move_to_end(key)
+      return cached.buffer
+    if cached is not None:
+      _DLPACK_BUFFER_CACHE.pop(key, None)
+
+  buffer = Buffer.from_dlpack(obj)
+  if getattr(buffer, "device", None) != device:
+    return _buffer_on_device(buffer, device)
+  return _cache_dlpack_buffer(key, obj, fingerprint, buffer)
+
+
 def _graph_input_buffer(obj: object, dtype: np.dtype, device: Device, keepalive: list[object]) -> Buffer:
   """Array-like -> MAX Buffer without copying CUDA DLPack inputs through NumPy."""
   if isinstance(obj, np.ndarray):
     return _input_buffer(np.ascontiguousarray(obj.astype(dtype, copy=False)), device)
 
   if _is_dlpack_array(obj):
+    if type(obj).__module__.split(".", 1)[0] == "torch":
+      try:
+        torch_buffer = _cached_torch_input_buffer(obj, dtype, device, keepalive)
+      except (TypeError, RuntimeError, BufferError):
+        torch_buffer = None
+      if torch_buffer is not None:
+        return torch_buffer
+
     prepared = _prepare_dlpack_operand(obj, dtype, keepalive)
     try:
       return _buffer_on_device(Buffer.from_dlpack(prepared), device)
@@ -804,6 +965,18 @@ def _native_max_gpu_func(dtype: np.dtype) -> _NativeMaxEntrypoint | None:
   if func is None:
     return None
   return cast("_NativeMaxEntrypoint", func)
+
+
+def _native_max_fast_path_supported(
+  eq: str,
+  shapes: list[tuple[int, ...]],
+  path: list[tuple[int, ...]],
+  dtype: np.dtype,
+) -> bool:
+  if len(shapes) != 2 or any(len(shape) != 2 for shape in shapes):
+    return False
+  max_dtype = _max_dtype_for(dtype)
+  return _is_direct_matmul(eq, shapes, path, max_dtype, max_dtype)
 
 
 def _rank_preserving_contiguous(array: np.ndarray) -> np.ndarray:
@@ -906,10 +1079,7 @@ def _execute_max_graph(
       _MODEL_CACHE.move_to_end(key)
 
   keepalive: list[object] = []
-  inputs = [
-    _graph_input_buffer(operand, executable.input_dtype, executable.device, keepalive)
-    for operand in operands
-  ]
+  inputs = [_graph_input_buffer(operand, executable.input_dtype, executable.device, keepalive) for operand in operands]
   result = executable.model.execute(*inputs)[0]
   if not isinstance(result, Buffer):
     raise TypeError(f"MAX model returned {type(result).__name__}, expected Buffer")
@@ -930,9 +1100,17 @@ def execute_max(
   else:
     dtype = np.dtype(dtype)
   if accum_dtype is None:
+    native_shapes: list[tuple[int, ...]] | None = None
+
+    def supports_native_fast_path() -> bool:
+      nonlocal native_shapes
+      if native_shapes is None:
+        native_shapes = [_shape_of(operand) for operand in operands]
+      return _native_max_fast_path_supported(eq, native_shapes, path, dtype)
+
     if backend == "max:cpu":
       native_cpu = _native_max_cpu_func(dtype)
-      if native_cpu is not None:
+      if native_cpu is not None and supports_native_fast_path():
         arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
         out = _execute_max_native(eq, arrays, path, CPU(), native_cpu)
         return _numpy_to_return_type(out, dtype, return_type)
@@ -941,19 +1119,20 @@ def execute_max(
       if native_gpu is not None:
         if accelerator_count() == 0:
           raise RuntimeError("backend='max:gpu' requested but MAX reports no accelerator")
-        arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
-        out = _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
-        return _numpy_to_return_type(out, dtype, return_type)
+        if supports_native_fast_path():
+          arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
+          out = _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
+          return _numpy_to_return_type(out, dtype, return_type)
     if backend == "max":
       if accelerator_count() > 0:
         native_gpu = _native_max_gpu_func(dtype)
-        if native_gpu is not None:
+        if native_gpu is not None and supports_native_fast_path():
           arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
           out = _execute_max_native(eq, arrays, path, Accelerator(), native_gpu)
           return _numpy_to_return_type(out, dtype, return_type)
       else:
         native_cpu = _native_max_cpu_func(dtype)
-        if native_cpu is not None:
+        if native_cpu is not None and supports_native_fast_path():
           arrays = [_host_numpy_operand(operand, dtype) for operand in operands]
           out = _execute_max_native(eq, arrays, path, CPU(), native_cpu)
           return _numpy_to_return_type(out, dtype, return_type)

@@ -89,6 +89,18 @@ def test_public_max_cpu_bypasses_python_graph_cache() -> None:
   assert len(_interop_max._MODEL_CACHE) == 0
 
 
+def test_public_max_cpu_uses_graph_for_batched_matmul() -> None:
+  _interop_max._MODEL_CACHE.clear()
+  a = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+  b = np.arange(40, dtype=np.float32).reshape(2, 4, 5)
+
+  actual = moeinsum.einsum("bij,bjk->bik", a, b, backend="max:cpu")
+  expected = np.einsum("bij,bjk->bik", a, b, optimize=True)
+
+  np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=1e-5)
+  assert len(_interop_max._MODEL_CACHE) == 1
+
+
 def test_max_gpu_torch_cuda_returns_cuda_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
   torch = pytest.importorskip("torch")
   if not torch.cuda.is_available():
@@ -110,6 +122,71 @@ def test_max_gpu_torch_cuda_returns_cuda_tensor(monkeypatch: pytest.MonkeyPatch)
     torch.testing.assert_close(actual, expected, atol=1e-1, rtol=1e-2)
   finally:
     torch.backends.cuda.matmul.allow_tf32 = previous_tf32
+
+
+def test_max_gpu_torch_cuda_reuses_dlpack_buffer_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+  torch = pytest.importorskip("torch")
+  if not torch.cuda.is_available():
+    pytest.skip("CUDA is not available")
+
+  monkeypatch.setattr(_interop_max, "_native_max_gpu_func", lambda dtype: None)
+  _interop_max._MODEL_CACHE.clear()
+  _interop_max._DLPACK_BUFFER_CACHE.clear()
+  previous_tf32 = torch.backends.cuda.matmul.allow_tf32
+  torch.backends.cuda.matmul.allow_tf32 = True
+  try:
+    a = torch.randn((64, 64), device="cuda", dtype=torch.float32)
+    b = torch.randn((64, 64), device="cuda", dtype=torch.float32)
+
+    first = moeinsum.einsum("ij,jk->ik", a, b, backend="max:gpu")
+    first_cache_keys = tuple(_interop_max._DLPACK_BUFFER_CACHE)
+    second = moeinsum.einsum("ij,jk->ik", a, b, backend="max:gpu")
+    second_cache_keys = tuple(_interop_max._DLPACK_BUFFER_CACHE)
+
+    assert len(first_cache_keys) >= 2
+    assert second_cache_keys == first_cache_keys
+    torch.testing.assert_close(second, first, atol=0, rtol=0)
+  finally:
+    torch.backends.cuda.matmul.allow_tf32 = previous_tf32
+    _interop_max._DLPACK_BUFFER_CACHE.clear()
+
+
+def test_max_backend_direct_matmul_detector_accepts_plain_and_batched() -> None:
+  dtype = _interop_max.DType.float32
+
+  assert _interop_max._is_direct_matmul(
+    "ij,jk->ik",
+    [(2, 3), (3, 4)],
+    [(0, 1)],
+    dtype,
+    dtype,
+  )
+  assert _interop_max._is_direct_matmul(
+    "bij,bjk->bik",
+    [(5, 2, 3), (5, 3, 4)],
+    [(0, 1)],
+    dtype,
+    dtype,
+  )
+
+
+@pytest.mark.parametrize(
+  ("eq", "shapes", "path", "accum_dtype"),
+  [
+    ("ij,jk,kl->il", [(2, 3), (3, 4), (4, 5)], [(0, 1), (0, 1)], _interop_max.DType.float32),
+    ("ij,kj->ik", [(2, 3), (4, 3)], [(0, 1)], _interop_max.DType.float32),
+    ("cij,cjk->cik", [(1, 2, 3), (5, 3, 4)], [(0, 1)], _interop_max.DType.float32),
+    ("ij,jk->ik", [(2, 1), (3, 4)], [(0, 1)], _interop_max.DType.float32),
+    ("ij,jk->ik", [(2, 3), (3, 4)], [(0, 1)], _interop_max.DType.float64),
+  ],
+)
+def test_max_backend_direct_matmul_detector_rejects_non_plain_matmul(
+  eq: str,
+  shapes: list[tuple[int, ...]],
+  path: list[tuple[int, ...]],
+  accum_dtype: object,
+) -> None:
+  assert not _interop_max._is_direct_matmul(eq, shapes, path, _interop_max.DType.float32, accum_dtype)
 
 
 def test_max_backend_model_cache_reuses_compiled_graph() -> None:

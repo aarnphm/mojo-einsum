@@ -83,6 +83,8 @@ def test_module_entry_single_optimizer() -> None:
     "backend",
     "optimize",
     "dtype",
+    "input_framework",
+    "input_device",
     "repeats",
     "warmup",
     "total_ms_median",
@@ -95,6 +97,8 @@ def test_module_entry_single_optimizer() -> None:
   assert rec["equation"] == "ij,jk->ik"
   assert rec["shapes"] == [[3, 4], [4, 5]]
   assert rec["backend"] == "reference"
+  assert rec["input_framework"] == "numpy"
+  assert rec["input_device"] == "cpu"
   assert isinstance(rec["total_ms_median"], (int, float))
   assert rec["total_ms_median"] > 0
 
@@ -155,6 +159,13 @@ def test_module_entry_compare_engines() -> None:
   assert comparisons["opt_einsum"]["status"] in {"ok", "skipped", "error"}
   assert comparisons["mlx"]["status"] in {"ok", "skipped", "error"}
   assert rec["comparison_fastest"] in rec["comparison_ratios"]
+
+
+def test_module_entry_cuda_requires_torch_input_framework() -> None:
+  args = _bench_args("ij,jk->ik", ["4,4", "4,4"], input_device="cuda")
+  proc = _run(_python(), "-m", "moeinsum._cli.bench", *args)
+  assert proc.returncode != 0
+  assert "--input-device cuda requires --input-framework torch" in proc.stderr
 
 
 def test_module_entry_progress_stays_on_stderr() -> None:
